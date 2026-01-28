@@ -1,0 +1,26 @@
+Episode ID: 1
+Scene: data/scene_datasets/mp3d/7y3sRwLe3Va/7y3sRwLe3Va.glb
+Instruction: Go around the right side of the center unit and stop by the right side doorway with the dining table and mirror in it. 
+
+Final Metrics:
+  distance_to_goal: 0.38157910108566284
+  ndtw: 0.4736432710112608
+  oracle_spl: 1.0
+  oracle_success: 1.0
+  path_length: 6.250001430511475
+  spl: 1.0
+  steps_taken: 35.0
+  success: 1.0
+  top_down_map_vlnce: {'map': array([[0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       ...,
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0]], dtype=uint8), 'fog_of_war_mask': array([[0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       ...,
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0],
+       [0, 0, 0, ..., 0, 0, 0]], dtype=uint8), 'agent_map_coord': (480, 616), 'agent_angle': 0.2617995149317407, 'bounds': {'lower': array([-21.601013,  -2.848159,  -3.362628], dtype=float32), 'upper': array([ 0.793914,  9.748381, 11.962493], dtype=float32)}, 'meters_per_px': 0.014965938404202461}

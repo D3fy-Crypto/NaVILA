@@ -20,6 +20,31 @@ from torch import Tensor
 cv2 = try_cv2_import()
 
 
+def quaternion_to_yaw(quat: Union[List[float], ndarray, quaternion.quaternion]) -> float:
+    """
+    Convert quaternion to yaw angle (rotation around y-axis).
+    
+    Args:
+        quat: Quaternion as [w, x, y, z] or quaternion object
+    
+    Returns:
+        Yaw angle in radians
+    """
+    if isinstance(quat, list) or isinstance(quat, np.ndarray):
+        if len(quat) == 4:
+            # Convert [w, x, y, z] to quaternion object
+            quat = np.quaternion(quat[0], quat[1], quat[2], quat[3])
+    
+    # Extract yaw from quaternion
+    # Using standard formula for yaw from quaternion
+    w, x, y, z = quat.w, quat.x, quat.y, quat.z
+    siny_cosp = 2 * (w * y + z * x)
+    cosy_cosp = 1 - 2 * (x * x + y * y)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+    
+    return float(yaw)
+
+
 def iclr_observations_to_image(observation: Dict[str, Any], info: Dict[str, Any]) -> ndarray:
     if "rgb" in observation and len(observation["rgb"].shape) == 4:
         return pano_observations_to_image(observation, info)
