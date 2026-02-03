@@ -1,0 +1,161 @@
+avila-eval) rithvik@vega:~/NaVILA_Env/brain_inspired/NaVILA/evaluation$ python scripts/extract_pose_deltas_final.py --test-episode 2195 --visualize 2>&1 | tail -80
+Output: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_exports/oracle_deltas_train.jsonl
+Max episodes: ALL
+Max steps: 500
+Cache duplicates: True
+Oracle mode: reference_path
+Verify oracle: False
+Visualize: True
+Visualization dir: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_visualizations
+Resume: False
+Seed: 42
+================================================================================
+
+
+================================================================================
+TESTING SINGLE EPISODE: 2195
+================================================================================
+
+Setting up Habitat environment...
+  Config loaded: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/vlnce_baselines/config/r2r_baselines/navila.yaml
+  Split: train
+  Sensors: ['INSTRUCTION_SENSOR', 'SHORTEST_PATH_SENSOR', 'VLN_ORACLE_PROGRESS_SENSOR']
+  Measurements: ['DISTANCE_TO_GOAL', 'SUCCESS', 'SPL', 'NDTW', 'PATH_LENGTH', 'ORACLE_SUCCESS', 'STEPS_TAKEN', 'ORACLE_SPL', 'TOP_DOWN_MAP_VLNCE']
+
+✓ Environment ready
+  Total episodes: 10819
+
+Episode ID: 2195
+Scene: data/scene_datasets/mp3d/S9hNv5qa7GM/S9hNv5qa7GM.glb
+Instruction: Walk through the doorway and turn right. Walk to the end of the hallway and turn right. Go into the bedroom and wait by the bed. 
+Start position: [-4.55709981918335, 2.9162778854370117, -2.144658088684082]
+Start rotation: [-0.0, 0.8660254037844385, -0.0, -0.5000000000000002]
+Goal position: [-8.78341007232666, 2.9162778854370117, -3.851670026779175]
+Reference path length: 6 waypoints
+
+--------------------------------------------------------------------------------
+Oracle Mode: goal
+--------------------------------------------------------------------------------
+    [Step 0] pos=(-4.56,-2.14), action=TURN_RIGHT, dist_to_goal=4.56m
+    [Step 1] pos=(-4.56,-2.14), action=TURN_RIGHT, dist_to_goal=4.56m
+    [Step 2] pos=(-4.56,-2.14), action=TURN_RIGHT, dist_to_goal=4.56m
+    [Step 3] pos=(-4.56,-2.14), action=TURN_RIGHT, dist_to_goal=4.56m
+    [Step 4] pos=(-4.56,-2.14), action=TURN_RIGHT, dist_to_goal=4.56m
+  Success: True
+  Steps taken: 51
+  Distance to goal: 0.40m
+  Path length: 7.00m
+  SPL: 1.0000
+
+  Verification log (first 10 steps):
+    Step  0: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  1: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  2: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  3: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  4: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  5: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  6: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  7: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  8: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    Step  9: action=TURN_RIGHT  , dist_to_goal=  4.56m
+    ... (41 more steps)
+
+  ✓ Video saved: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_visualizations/test_ep_02195_goal_success_True.mp4
+--------------------------------------------------------------------------------
+Oracle Mode: reference_path
+--------------------------------------------------------------------------------
+    [Step 0] pos=(-4.56,-2.14), action=STOP, dist_to_goal=4.56m, wp_idx=1/6, dist_to_wp=0.06m
+  Success: False
+  Steps taken: 1
+  Distance to goal: 7.42m
+  Path length: 0.00m
+  SPL: 0.0000
+
+  Verification log (first 10 steps):
+    Step  0: action=STOP        , dist_to_goal=  4.56m, dist_to_wp=  0.06m, wp_idx=1
+
+  ✓ Video saved: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_visualizations/test_ep_02195_reference_path_success_False.mp4
+================================================================================
+EPISODE TEST COMPLETE
+================================================================================
+
+(navila-eval) rithvik@vega:~/NaVILA_Env/brain_inspired/NaVILA/evaluation$ python scripts/extract_pose_deltas_final.py --test-episode 2252 --visualize 2>&1 | tail -80
+Resume: False
+Seed: 42
+================================================================================
+
+
+================================================================================
+TESTING SINGLE EPISODE: 2252
+================================================================================
+
+Setting up Habitat environment...
+  Config loaded: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/vlnce_baselines/config/r2r_baselines/navila.yaml
+  Split: train
+  Sensors: ['INSTRUCTION_SENSOR', 'SHORTEST_PATH_SENSOR', 'VLN_ORACLE_PROGRESS_SENSOR']
+  Measurements: ['DISTANCE_TO_GOAL', 'SUCCESS', 'SPL', 'NDTW', 'PATH_LENGTH', 'ORACLE_SUCCESS', 'STEPS_TAKEN', 'ORACLE_SPL', 'TOP_DOWN_MAP_VLNCE']
+
+✓ Environment ready
+  Total episodes: 10819
+
+Episode ID: 2252
+Scene: data/scene_datasets/mp3d/1LXtFkjw3qL/1LXtFkjw3qL.glb
+Instruction: Walk through a glass doorway.  Turn to the left and go through a white doorway.  Then go towards the stairs.  Wait at the top of the stairs. 
+Start position: [-0.6981109976768494, 3.4844110012054443, 4.789036750793457]
+Start rotation: [-0.0, 0.9659258262890682, 0.0, 0.25881904510252096]
+Goal position: [1.4428800344467163, 3.4510085582733154, 3.8511300086975098]
+Reference path length: 5 waypoints
+
+--------------------------------------------------------------------------------
+Oracle Mode: goal
+--------------------------------------------------------------------------------
+    [Step 0] pos=(-0.70,4.79), action=TURN_LEFT, dist_to_goal=2.34m
+    [Step 1] pos=(-0.70,4.79), action=TURN_LEFT, dist_to_goal=2.34m
+    [Step 2] pos=(-0.70,4.79), action=TURN_LEFT, dist_to_goal=2.34m
+    [Step 3] pos=(-0.70,4.79), action=MOVE_FORWARD, dist_to_goal=2.34m
+    [Step 4] pos=(-0.63,5.03), action=TURN_LEFT, dist_to_goal=2.39m
+  Success: True
+  Steps taken: 32
+  Distance to goal: 0.36m
+  Path length: 3.52m
+  SPL: 1.0000
+
+  Verification log (first 10 steps):
+    Step  0: action=TURN_LEFT   , dist_to_goal=  2.34m
+    Step  1: action=TURN_LEFT   , dist_to_goal=  2.34m
+    Step  2: action=TURN_LEFT   , dist_to_goal=  2.34m
+    Step  3: action=MOVE_FORWARD, dist_to_goal=  2.34m
+    Step  4: action=TURN_LEFT   , dist_to_goal=  2.39m
+    Step  5: action=MOVE_FORWARD, dist_to_goal=  2.39m
+    Step  6: action=MOVE_FORWARD, dist_to_goal=  2.40m
+    Step  7: action=TURN_LEFT   , dist_to_goal=  2.44m
+    Step  8: action=MOVE_FORWARD, dist_to_goal=  2.44m
+    Step  9: action=TURN_LEFT   , dist_to_goal=  2.44m
+    ... (22 more steps)
+
+  Height changes during navigation:
+    Step  0: height=  3.48m, pos=(  -0.70,    4.79)
+    Step 15: height=  3.49m, pos=(   0.28,    5.59) (delta: +0.00m)
+    Step 16: height=  3.49m, pos=(   0.53,    5.53) (delta: -0.00m)
+    Step 17: height=  3.49m, pos=(   0.77,    5.46) (delta: -0.00m)
+    Step 18: height=  3.48m, pos=(   1.01,    5.40) (delta: -0.00m)
+    Step 24: height=  3.48m, pos=(   1.07,    5.14) (delta: -0.00m)
+
+  ✓ Video saved: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_visualizations/test_ep_02252_goal_success_True.mp4
+--------------------------------------------------------------------------------
+Oracle Mode: reference_path
+--------------------------------------------------------------------------------
+    [Step 0] pos=(-0.70,4.79), action=STOP, dist_to_goal=2.34m, wp_idx=1/5, dist_to_wp=0.00m
+  Success: False
+  Steps taken: 1
+  Distance to goal: 3.89m
+  Path length: 0.00m
+  SPL: 0.0000
+
+  Verification log (first 10 steps):
+    Step  0: action=STOP        , dist_to_goal=  2.34m, dist_to_wp=  0.00m, wp_idx=1
+
+  ✓ Video saved: /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/oracle_visualizations/test_ep_02252_reference_path_success_False.mp4
+================================================================================
+EPISODE TEST COMPLETE
+================================================================================

@@ -10,6 +10,7 @@ import argparse
 import numpy as np
 from PIL import Image
 import imageio
+import random
 
 # Add evaluation directory to path
 eval_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +29,8 @@ def visualize_oracle_with_map(
     max_steps=500,
     output_dir="oracle_visualization",
     save_video=True,
+    episode_index=0,
+    episode_id=None,
 ):
     """
     Run oracle navigation and visualize with both first-person and top-down map views.
@@ -38,13 +41,15 @@ def visualize_oracle_with_map(
         max_steps: Maximum steps per episode
         output_dir: Directory to save outputs
         save_video: Whether to save video
+        episode_index: Index of episode to run (for display purposes)
+        episode_id: Specific episode ID to visualize (if None, uses sequential)
     """
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 80)
-    print("Oracle Path Visualization with 2D Map")
+    print(f"Oracle Path Visualization with 2D Map - Run {episode_index}")
     print("=" * 80)
     
     # Load config
@@ -71,12 +76,40 @@ def visualize_oracle_with_map(
     config.freeze()
     
     # Create environment
-    print("\n[1] Creating environment...")
+    print(f"\n[1] Creating environment...")
     env = Env(config=config.TASK_CONFIG)
     
-    # Reset environment
-    print("[2] Resetting environment...")
-    observations = env.reset()
+    # If specific episode_id is provided, find and load it
+    if episode_id is not None:
+        print(f"[2] Searching for episode ID: {episode_id}...")
+        found = False
+        max_search = len(env.episodes) if hasattr(env, 'episodes') else 10000
+        actual_search = min(max_search, 10000)  # Cap at 10k to avoid infinite search
+        
+        for i in range(actual_search):
+            observations = env.reset()
+            current_ep_id = env.current_episode.episode_id
+            if current_ep_id == episode_id:
+                print(f"    Found episode {episode_id} at index {i}")
+                found = True
+                break
+            if (i + 1) % 100 == 0:
+                print(f"    Searched {i+1}/{actual_search} episodes...")
+        
+        if not found:
+            print(f"\n    ERROR: Episode {episode_id} not found in dataset!")
+            print(f"    Searched {actual_search} episodes in split '{split}'")
+            print(f"    This episode may not exist in this split.")
+            print(f"    Skipping this episode...\n")
+            env.close()
+            return None  # Return None to indicate failure
+    else:
+        # Just reset once for sequential mode
+        print(f"[2] Loading episode {episode_index}...")
+        for i in range(episode_index + 1):
+            observations = env.reset()
+    
+    print(f"[3] Starting visualization...")
     
     # Get episode info
     episode = env.current_episode
@@ -95,7 +128,7 @@ def visualize_oracle_with_map(
     path_positions = []  # Store agent positions for visualization
     
     # Run episode
-    print(f"\n[3] Running oracle navigation...")
+    print(f"\n[4] Running oracle navigation...")
     print("-" * 80)
     
     step = 0
@@ -136,7 +169,7 @@ def visualize_oracle_with_map(
     print("-" * 80)
     final_metrics = env.get_metrics()
     
-    print(f"\n[4] Episode Complete!")
+    print(f"\n[5] Episode Complete!")
     print(f"\n[Final Metrics]")
     print(f"  Total Steps: {step}")
     print(f"  Success: {final_metrics.get('success', 0) > 0}")
@@ -144,27 +177,43 @@ def visualize_oracle_with_map(
     print(f"  Distance to Goal: {final_metrics.get('distance_to_goal', 0):.2f}m")
     print(f"  Path Length: {final_metrics.get('path_length', 0):.2f}m")
     
-    # Save video
+    # Save video with unique filename including episode_index
     if save_video and frames:
-        video_path = os.path.join(output_dir, f"oracle_map_episode_{episode.episode_id}.mp4")
-        print(f"\n[5] Saving video to: {video_path}")
+        video_path = os.path.join(output_dir, f"oracle_map_ep{episode_index:03d}_id{episode.episode_id}.mp4")
+        print(f"\n[6] Saving video to: {video_path}")
         imageio.mimsave(video_path, frames, fps=10)
         print(f"  Saved {len(frames)} frames at 10 FPS")
     
-    # Save frames
+    # Save frames with unique filenames
     if frames:
-        first_frame_path = os.path.join(output_dir, f"map_episode_{episode.episode_id}_start.png")
-        last_frame_path = os.path.join(output_dir, f"map_episode_{episode.episode_id}_end.png")
+        first_frame_path = os.path.join(output_dir, f"map_ep{episode_index:03d}_id{episode.episode_id}_start.png")
+        last_frame_path = os.path.join(output_dir, f"map_ep{episode_index:03d}_id{episode.episode_id}_end.png")
         Image.fromarray(frames[0]).save(first_frame_path)
         Image.fromarray(frames[-1]).save(last_frame_path)
         print(f"  Saved start frame: {first_frame_path}")
         print(f"  Saved end frame: {last_frame_path}")
+    
+    # Save metrics to file
+    metrics_path = os.path.join(output_dir, f"ep{episode_index:03d}_id{episode.episode_id}_metrics.txt")
+    with open(metrics_path, 'w') as f:
+        f.write(f"Episode Index: {episode_index}\n")
+        f.write(f"Episode ID: {episode.episode_id}\n")
+        f.write(f"Scene: {episode.scene_id.split('/')[-1]}\n")
+        f.write(f"Instruction: {episode.instruction.instruction_text}\n")
+        f.write(f"\nFinal Metrics:\n")
+        f.write(f"  Total Steps: {step}\n")
+        f.write(f"  Success: {final_metrics.get('success', 0) > 0}\n")
+        f.write(f"  SPL: {final_metrics.get('spl', 0):.3f}\n")
+        f.write(f"  Distance to Goal: {final_metrics.get('distance_to_goal', 0):.2f}m\n")
+        f.write(f"  Path Length: {final_metrics.get('path_length', 0):.2f}m\n")
+    print(f"  Saved metrics: {metrics_path}")
     
     print("\n" + "=" * 80)
     print("Visualization Complete!")
     print("=" * 80)
     
     env.close()
+    return True  # Return True to indicate success
 
 
 def create_combined_visualization(
@@ -409,28 +458,106 @@ def main():
         default=1,
         help="Number of episodes to visualize"
     )
+    parser.add_argument(
+        "--random",
+        action="store_true",
+        help="Select random episodes instead of sequential"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for episode selection (if --random is used)"
+    )
     
     args = parser.parse_args()
+    
+    # Set random seed if provided
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        print(f"Using random seed: {args.seed}")
     
     # Change to evaluation directory
     os.chdir(eval_dir)
     
-    # Run visualization
+    # Get list of available episode IDs if using random mode
+    episode_ids_to_process = None
+    if args.random:
+        print(f"\n{'='*80}")
+        print(f"Collecting episode IDs from dataset...")
+        print(f"{'='*80}\n")
+        
+        # Load config to get dataset
+        config = get_config(args.config, [
+            "TASK_CONFIG.DATASET.SPLIT", args.split,
+        ])
+        config.defrost()
+        config.TASK_CONFIG.DATASET.NUM_CHUNKS = 1
+        config.TASK_CONFIG.DATASET.CHUNK_IDX = 0
+        config.freeze()
+        
+        # Create temporary environment to get episode list
+        temp_env = Env(config=config.TASK_CONFIG)
+        all_episode_ids = []
+        
+        # Collect episode IDs (limit to reasonable number)
+        max_collect = min(1000, len(temp_env.episodes))
+        print(f"Collecting up to {max_collect} episode IDs...")
+        for i in range(max_collect):
+            temp_env.reset()
+            all_episode_ids.append(temp_env.current_episode.episode_id)
+            if (i + 1) % 100 == 0:
+                print(f"  Collected {i+1} episode IDs...")
+        
+        temp_env.close()
+        
+        print(f"Total episodes collected: {len(all_episode_ids)}")
+        
+        # Randomly sample episodes
+        if args.num_episodes <= len(all_episode_ids):
+            episode_ids_to_process = random.sample(all_episode_ids, args.num_episodes)
+        else:
+            print(f"Warning: Requested {args.num_episodes} episodes but only {len(all_episode_ids)} available")
+            episode_ids_to_process = all_episode_ids
+        
+        print(f"Selected {len(episode_ids_to_process)} random episodes: {episode_ids_to_process[:5]}{'...' if len(episode_ids_to_process) > 5 else ''}")
+    
+    # Run visualization for multiple episodes
+    successful_runs = 0
+    skipped_runs = 0
+    
     for i in range(args.num_episodes):
         print(f"\n{'='*80}")
         print(f"Running Episode {i+1}/{args.num_episodes}")
         print(f"{'='*80}\n")
         
-        visualize_oracle_with_map(
+        # Determine episode ID to use
+        episode_id = episode_ids_to_process[i] if episode_ids_to_process else None
+        
+        result = visualize_oracle_with_map(
             config_path=args.config,
             split=args.split,
             max_steps=args.max_steps,
             output_dir=args.output_dir,
             save_video=not args.no_video,
+            episode_index=i,
+            episode_id=episode_id,
         )
         
+        if result is None:
+            skipped_runs += 1
+            print(f"Skipped episode {i+1}/{args.num_episodes} (not found in dataset)")
+        else:
+            successful_runs += 1
+        
         if args.num_episodes > 1 and i < args.num_episodes - 1:
-            print(f"\nCompleted episode {i+1}/{args.num_episodes}\n")
+            print(f"\nCompleted episode {i+1}/{args.num_episodes}, continuing to next episode...\n")
+    
+    print(f"\n{'='*80}")
+    print(f"Summary: {successful_runs} successful, {skipped_runs} skipped")
+    print(f"{'='*80}")
+    print("All episodes completed!")
 
 
 if __name__ == "__main__":
