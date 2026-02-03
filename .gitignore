@@ -29,7 +29,7 @@ dist
 
 # Data
 !**/alpaca-data-conversation.json
-
+data/
 # Editor
 .idea
 *.swp
@@ -56,5 +56,5 @@ slurm-scripts
 # Sim
 evaluation/habitat-lab
 evaluation/habitat-sim
-evaluation/data
+evaluation/data/
 evaluation/eval_out
