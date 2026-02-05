@@ -44,6 +44,7 @@ class LlavaConfig(PretrainedConfig):
         s2_max_split_size=None,
         num_time_tokens=None,
         time_token_format=None,
+        gru_ckpt_path=None,
         **kwargs,
     ):
         super().__init__()
@@ -71,3 +72,4 @@ class LlavaConfig(PretrainedConfig):
         self.s2_max_split_size = s2_max_split_size
         self.num_time_tokens = num_time_tokens
         self.time_token_format = time_token_format
+        self.gru_ckpt_path = gru_ckpt_path

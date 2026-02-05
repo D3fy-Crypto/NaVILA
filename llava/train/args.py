@@ -37,6 +37,9 @@ class DataArguments:
     # for video training
     num_video_frames: int = 8
     fps: float = 0.0  # 0.0 means we do not use fps at all. Always sample the same number of frames.
+    
+    # for motion/pose deltas
+    pose_deltas_path: Optional[str] = field(default=None, metadata={"help": "Path to oracle pose deltas JSONL file"})
 
 
 @dataclass
@@ -60,6 +63,9 @@ class ModelArguments:
     num_time_tokens: int = 0
     time_token_format: str = "<t{t}>"
     soft_ce_std: float = 1.0
+    
+    # Motion/GRU-related
+    gru_ckpt_path: Optional[str] = field(default=None, metadata={"help": "Path to pretrained MotionGRU checkpoint"})
 
 
 @dataclass
@@ -71,6 +77,7 @@ class TrainingArguments(transformers.TrainingArguments):
     tune_vision_tower: bool = field(default=False)
     tune_language_model: bool = field(default=False)
     tune_mm_projector: bool = field(default=False)
+    tune_motion_gru: bool = field(default=False)
     model_dtype: str = field(default="torch.bfloat16")
     model_max_length: int = field(
         default=512,

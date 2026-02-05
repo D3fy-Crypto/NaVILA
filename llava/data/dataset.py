@@ -2163,6 +2163,7 @@ class LazyVLNCEDataset(Dataset):
         tokenizer: transformers.PreTrainedTokenizer,
         data_args: DataArguments,
         training_args: TrainingArguments,
+        pose_deltas_path: Optional[str] = None,
     ):
         super().__init__()
         try:
@@ -2176,6 +2177,22 @@ class LazyVLNCEDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
+        
+        # Load pose deltas for motion encoding
+        self.pose_deltas = {}
+        if pose_deltas_path is not None:
+            if os.path.exists(pose_deltas_path):
+                logger.info(f"Loading pose deltas from {pose_deltas_path}")
+                with open(pose_deltas_path) as fp:
+                    for line in fp:
+                        data = json.loads(line)
+                        episode_id = data.get("episode_id")
+                        deltas = data.get("deltas", [])
+                        if episode_id and deltas:
+                            self.pose_deltas[episode_id] = deltas
+                logger.info(f"Loaded pose deltas for {len(self.pose_deltas)} episodes")
+            else:
+                logger.warning(f"Pose deltas file not found: {pose_deltas_path}")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -2269,9 +2286,59 @@ class LazyVLNCEDataset(Dataset):
             data_dict["image"] = image_tensor
             if not video_loading_succeed:
                 data_dict["labels"][:] = IGNORE_INDEX
+            
+            # Load pose deltas for motion encoding if available
+            video_id = sources[0].get("video_id") if isinstance(sources[0], dict) else None
+            pose_deltas = self._load_pose_deltas(video_id, num_video_frames)
+            if pose_deltas is not None:
+                data_dict["pose_deltas"] = pose_deltas
         else:
             data_dict["image"] = None
         return data_dict
+    
+    def _load_pose_deltas(self, video_id, num_frames):
+        """
+        Load and process pose deltas for a video.
+        
+        Args:
+            video_id: Episode/video ID to lookup in pose_deltas dict
+            num_frames: Number of frames that were sampled
+        
+        Returns:
+            torch.Tensor of shape [num_frames, 4] with normalized pose deltas,
+            or None if not available
+        """
+        if video_id is None or video_id not in self.pose_deltas:
+            return None
+        
+        deltas_list = self.pose_deltas[video_id]
+        if not deltas_list or len(deltas_list) == 0:
+            return None
+        
+        # Sample the same number of deltas as frames
+        # Note: we sample num_frames-1 deltas (transitions between frames)
+        if len(deltas_list) >= num_frames:
+            indices = np.linspace(0, len(deltas_list) - 1, num_frames - 1, endpoint=False, dtype=int)
+            sampled_deltas = [deltas_list[idx] for idx in indices]
+        else:
+            # If not enough deltas, pad with zeros
+            sampled_deltas = deltas_list + [[0, 0, 0]] * (num_frames - 1 - len(deltas_list))
+        
+        # Convert to normalized format: (dx, dy, dyaw) -> (dx/0.25, dy/0.25, sin(dyaw), cos(dyaw))
+        processed_deltas = []
+        for delta in sampled_deltas:
+            dx, dy, dyaw = delta[0], delta[1], delta[2]
+            dx_norm = dx / 0.25  # Normalize by bin size
+            dy_norm = dy / 0.25
+            dyaw_sin = np.sin(dyaw)
+            dyaw_cos = np.cos(dyaw)
+            processed_deltas.append([dx_norm, dy_norm, dyaw_sin, dyaw_cos])
+        
+        # Pad to num_frames if we have fewer deltas
+        if len(processed_deltas) < num_frames:
+            processed_deltas.extend([[0, 0, 0, 1]] * (num_frames - len(processed_deltas)))
+        
+        return torch.tensor(processed_deltas[:num_frames], dtype=torch.float32)
 
 
 @dataclass

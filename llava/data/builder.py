@@ -96,4 +96,5 @@ def build_dataset_legacy(
         image_folder=getattr(dataset, "image_path"),
         data_args=data_args,
         training_args=training_args,
+        pose_deltas_path=getattr(data_args, "pose_deltas_path", None),
     )
