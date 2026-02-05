@@ -780,6 +780,14 @@ class LLaVATrainer(Trainer):
         if self.args.include_num_input_tokens_seen:
             logs["num_input_tokens_seen"] = self.state.num_input_tokens_seen
 
+        # ========== GRU Gradient Monitoring ==========
+        # Add gradient norms for motion encoder components
+        if hasattr(self, 'gru_monitor') and self.gru_monitor is not None:
+            gradient_metrics = self.gru_monitor.log_gradient_norms()
+            if gradient_metrics:
+                logs.update(gradient_metrics)
+        # ============================================
+
         output = {**logs, **{"step": self.state.global_step}}
         self.state.log_history.append(output)
 

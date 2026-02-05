@@ -97,6 +97,9 @@ def prepare_config_for_training(
     config.tune_language_model = training_args.tune_language_model
     config.tune_vision_tower = training_args.tune_vision_tower
     config.tune_mm_projector = training_args.tune_mm_projector
+    config.tune_motion_gru = getattr(training_args, "tune_motion_gru", False)
+    # set motion/GRU configuration
+    config.gru_ckpt_path = getattr(model_args, "gru_ckpt_path", None)
     # set data args
     # Get the image_aspect_ratio from the config if is defined there
     # (case of resuming from a checkpoint) or from the data_args

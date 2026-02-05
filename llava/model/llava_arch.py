@@ -73,6 +73,8 @@ class LlavaMetaModel(ABC):
         # Initialize motion encoder if GRU checkpoint path is provided
         gru_ckpt_path = getattr(config, "gru_ckpt_path", None)
         if gru_ckpt_path is not None:
+            logging.info("="*80)
+            logging.info("[Model] Initializing MotionEncoder with GRU integration")
             self.motion_encoder = MotionEncoderWithProjector(
                 gru_ckpt_path=gru_ckpt_path,
                 gru_hidden_size=256,
@@ -83,8 +85,11 @@ class LlavaMetaModel(ABC):
                 freeze_gru=True,
                 dropout=0.1,
             )
+            logging.info(f"[Model] ✅ MotionEncoder initialized (output_dim={config.hidden_size})")
+            logging.info("="*80)
         else:
             self.motion_encoder = None
+            logging.info("[Model] No GRU checkpoint provided - motion encoding disabled")
 
         self.post_config()
         self.is_loaded = True
@@ -340,6 +345,9 @@ class LlavaMetaForCausalLM(ABC):
             if type(pose_deltas) is list:
                 pose_deltas = torch.cat(pose_deltas, dim=0)
             motion_features = self.get_motion_encoder()(pose_deltas).to(self.device)
+            if hasattr(self, '_log_motion_once') and not self._log_motion_once:
+                logging.info(f"[Forward] Motion encoding: {pose_deltas.shape} → {motion_features.shape}")
+                self._log_motion_once = True
         
         # Note (kentang-mit@): image start / end is not implemented here to support pretraining.
         if getattr(self.config, "turn_mm_projector", False) and getattr(self.config, "mm_use_im_start_end", False):

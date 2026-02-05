@@ -2182,7 +2182,8 @@ class LazyVLNCEDataset(Dataset):
         self.pose_deltas = {}
         if pose_deltas_path is not None:
             if os.path.exists(pose_deltas_path):
-                logger.info(f"Loading pose deltas from {pose_deltas_path}")
+                logger.info("="*80)
+                logger.info(f"[Dataset] Loading pose deltas from {pose_deltas_path}")
                 with open(pose_deltas_path) as fp:
                     for line in fp:
                         data = json.loads(line)
@@ -2190,9 +2191,10 @@ class LazyVLNCEDataset(Dataset):
                         deltas = data.get("deltas", [])
                         if episode_id and deltas:
                             self.pose_deltas[episode_id] = deltas
-                logger.info(f"Loaded pose deltas for {len(self.pose_deltas)} episodes")
+                logger.info(f"[Dataset] ✅ Loaded pose deltas for {len(self.pose_deltas)} episodes")
+                logger.info("="*80)
             else:
-                logger.warning(f"Pose deltas file not found: {pose_deltas_path}")
+                logger.warning(f"[Dataset] ⚠️  Pose deltas file not found: {pose_deltas_path}")
 
     def __len__(self):
         return len(self.list_data_dict)

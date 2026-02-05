@@ -43,6 +43,8 @@ from llava.model import *
 from llava.train.args import DataArguments, ModelArguments, TrainingArguments
 from llava.train.callbacks.autoresume_callback import AutoResumeCallback
 from llava.train.llava_trainer import LLaVATrainer, VILADPOTrainer
+from llava.train.gru_monitor import GRUTrainingMonitor
+from llava.train.save_final_model import SaveFinalModelCallback
 from llava.train.sequence_parallel import set_pg_manager
 from llava.train.utils import (
     get_checkpoint_path,
@@ -605,6 +607,15 @@ def train():
                 model.get_vision_tower().requires_grad_(training_args.tune_vision_tower)
             model.get_mm_projector().requires_grad_(training_args.tune_mm_projector)
             mprint(f"mm projector {training_args.tune_mm_projector}")
+            
+            # Set motion encoder trainability
+            if hasattr(model, 'get_motion_encoder') and model.get_motion_encoder() is not None:
+                motion_encoder = model.get_motion_encoder()
+                # Freeze GRU, train projector
+                motion_encoder.gru.requires_grad_(False)
+                motion_encoder.grid_to_vision.requires_grad_(training_args.tune_motion_gru)
+                mprint(f"motion GRU (frozen=True), grid_to_vision projector {training_args.tune_motion_gru}")
+            
             model.print_trainable_parameters()
     else:
         model.get_llm().requires_grad_(training_args.tune_language_model)
@@ -614,6 +625,14 @@ def train():
             model.get_mm_projector().requires_grad_(training_args.tune_mm_projector)
             mprint(f"vision tower {training_args.tune_vision_tower}")
             mprint(f"mm projector {training_args.tune_mm_projector}")
+        
+        # Set motion encoder trainability
+        if hasattr(model, 'get_motion_encoder') and model.get_motion_encoder() is not None:
+            motion_encoder = model.get_motion_encoder()
+            # Freeze GRU, train projector
+            motion_encoder.gru.requires_grad_(False)
+            motion_encoder.grid_to_vision.requires_grad_(training_args.tune_motion_gru)
+            mprint(f"motion GRU (frozen=True), grid_to_vision projector {training_args.tune_motion_gru}")
 
         if not any(
             [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector]
@@ -709,6 +728,11 @@ def train():
 
     # Add a training step_end callback to check whether to autosuspend.
     callbacks = [AutoResumeCallback()]
+    
+    # Add callback to save final combined model (GRU + VLA + Projector)
+    final_model_path = "/home/rithvik/NaVILA_Env/brain_inspired/NaVILA/evaluation/checkpoints/final_model_gru"
+    callbacks.append(SaveFinalModelCallback(save_path=final_model_path))
+    mprint(f"✅ Will save final combined model to: {final_model_path}")
 
     if training_args.dpo:
         ref_model = model_cls(
@@ -744,6 +768,15 @@ def train():
         )
     else:
         trainer = LLaVATrainer(model=model, tokenizer=tokenizer, args=training_args, callbacks=callbacks, **data_module)
+    
+    # ========== GRU Monitoring Setup ==========
+    # Add monitoring for GRU gradient flow
+    gru_monitor = GRUTrainingMonitor(model, log_every_n_steps=10)
+    gru_monitor.log_model_status()
+    trainer.gru_monitor = gru_monitor  # Attach to trainer
+    mprint("✅ GRU monitoring enabled - will log gradients every 10 steps")
+    # ==========================================
+    
     print(
         "length of dataloader:",
         len(trainer.get_train_dataloader()),

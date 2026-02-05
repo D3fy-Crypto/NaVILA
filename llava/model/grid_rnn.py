@@ -48,8 +48,8 @@ class MotionGRU(nn.Module):
         self.num_layers = num_layers
         self.embedding_dim = embedding_dim
         
-        # Input projection
-        self.input_projection = nn.Linear(input_size, hidden_size)
+        # Input projection (match checkpoint naming: input_proj)
+        self.input_proj = nn.Linear(input_size, hidden_size)
         
         # GRU layers
         self.gru = nn.GRU(
@@ -60,8 +60,8 @@ class MotionGRU(nn.Module):
             batch_first=True,
         )
         
-        # Embedding projection
-        self.embedding_projection = nn.Sequential(
+        # Embedding projection (match checkpoint naming: embed_proj)
+        self.embed_proj = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
@@ -77,7 +77,7 @@ class MotionGRU(nn.Module):
             embeddings: [batch, embedding_dim] L2-normalized place embeddings
         """
         # Project input
-        x = self.input_projection(motion_sequences)  # [batch, seq_len, hidden_size]
+        x = self.input_proj(motion_sequences)  # [batch, seq_len, hidden_size]
         
         # GRU forward
         gru_out, hidden = self.gru(x)  # hidden: [num_layers, batch, hidden_size]
@@ -86,7 +86,7 @@ class MotionGRU(nn.Module):
         last_hidden = hidden[-1]  # [batch, hidden_size]
         
         # Project to embedding space
-        embeddings = self.embedding_projection(last_hidden)  # [batch, embedding_dim]
+        embeddings = self.embed_proj(last_hidden)  # [batch, embedding_dim]
         
         # L2 normalize
         embeddings = F.normalize(embeddings, p=2, dim=-1)
@@ -163,9 +163,11 @@ class MotionEncoderWithProjector(nn.Module):
         # Load pretrained GRU if provided
         if gru_ckpt_path is not None and os.path.exists(gru_ckpt_path):
             print(f"Loading pretrained MotionGRU from {gru_ckpt_path}")
-            checkpoint = torch.load(gru_ckpt_path, map_location="cpu")
+            checkpoint = torch.load(gru_ckpt_path, map_location="cpu", weights_only=False)
             # Handle both direct state_dict and wrapped state_dict
-            if "state_dict" in checkpoint:
+            if "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            elif "state_dict" in checkpoint:
                 state_dict = checkpoint["state_dict"]
             else:
                 state_dict = checkpoint
