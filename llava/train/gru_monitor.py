@@ -79,7 +79,7 @@ class GRUTrainingMonitor:
         
         self.first_log = False
     
-    def log_gradient_norms(self, loss):
+    def log_gradient_norms(self):
         """Log gradient norms for trainable modules."""
         self.step += 1
         
@@ -88,35 +88,47 @@ class GRUTrainingMonitor:
         
         metrics = {}
         
-        # Compute gradient norms
+        # Compute gradient norms with detailed logging
         if hasattr(self.model, 'mm_projector') and self.model.mm_projector is not None:
             grad_norm = 0.0
-            for p in self.model.mm_projector.parameters():
+            param_count = 0
+            grad_count = 0
+            for name, p in self.model.mm_projector.named_parameters():
+                param_count += 1
                 if p.grad is not None:
+                    grad_count += 1
                     grad_norm += p.grad.norm().item() ** 2
             grad_norm = grad_norm ** 0.5
             metrics['grad_norm/mm_projector'] = grad_norm
+            
+            # CRITICAL: Log detailed gradient status
+            if self.step % (self.log_every_n_steps * 10) == 0:
+                logger.info(f"[Step {self.step}] mm_projector: {param_count} params, {grad_count}/{param_count} have gradients, norm={grad_norm:.6f}")
         
         if hasattr(self.model, 'motion_encoder') and self.model.motion_encoder is not None:
             # Check GRU gradients (should be None/0)
             gru_grad_norm = 0.0
+            gru_grad_count = 0
             for p in self.model.motion_encoder.gru.parameters():
                 if p.grad is not None:
+                    gru_grad_count += 1
                     gru_grad_norm += p.grad.norm().item() ** 2
             gru_grad_norm = gru_grad_norm ** 0.5
             metrics['grad_norm/motion_gru'] = gru_grad_norm
             
             # Check projector gradients (should be non-zero)
             g2v_grad_norm = 0.0
+            g2v_grad_count = 0
             for p in self.model.motion_encoder.projector.parameters():
                 if p.grad is not None:
+                    g2v_grad_count += 1
                     g2v_grad_norm += p.grad.norm().item() ** 2
             g2v_grad_norm = g2v_grad_norm ** 0.5
             metrics['grad_norm/grid_to_vision'] = g2v_grad_norm
-        
-        # Log to console
-        if self.step % (self.log_every_n_steps * 10) == 0:
-            logger.info(f"[Step {self.step}] Gradient norms: {metrics}")
+            
+            if self.step % (self.log_every_n_steps * 10) == 0:
+                logger.info(f"[Step {self.step}] motion_gru: {gru_grad_count} grads, norm={gru_grad_norm:.6f}")
+                logger.info(f"[Step {self.step}] grid_to_vision: {g2v_grad_count} grads, norm={g2v_grad_norm:.6f}")
         
         return metrics
 

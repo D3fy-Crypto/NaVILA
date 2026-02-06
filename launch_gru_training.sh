@@ -3,9 +3,14 @@
 # GRU Integration Training Launcher
 # This script verifies the implementation and starts training
 
+# Change to NaVILA directory
+cd /home/rithvik/NaVILA_Env/brain_inspired/NaVILA
+
 echo "======================================"
 echo "GRU Integration Training Launcher"
 echo "======================================"
+echo ""
+echo "Working directory: $(pwd)"
 echo ""
 
 # Activate conda environment
@@ -27,7 +32,6 @@ if [ $VERIFY_EXIT_CODE -ne 0 ]; then
     echo "Check the output above for details."
     exit 1
 fi
-
 echo ""
 echo "✅ Verification passed!"
 echo ""

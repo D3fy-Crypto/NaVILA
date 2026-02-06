@@ -613,8 +613,8 @@ def train():
                 motion_encoder = model.get_motion_encoder()
                 # Freeze GRU, train projector
                 motion_encoder.gru.requires_grad_(False)
-                motion_encoder.grid_to_vision.requires_grad_(training_args.tune_motion_gru)
-                mprint(f"motion GRU (frozen=True), grid_to_vision projector {training_args.tune_motion_gru}")
+                motion_encoder.projector.requires_grad_(training_args.tune_motion_gru)
+                mprint(f"motion GRU (frozen=True), projector {training_args.tune_motion_gru}")
             
             model.print_trainable_parameters()
     else:
@@ -631,8 +631,8 @@ def train():
             motion_encoder = model.get_motion_encoder()
             # Freeze GRU, train projector
             motion_encoder.gru.requires_grad_(False)
-            motion_encoder.grid_to_vision.requires_grad_(training_args.tune_motion_gru)
-            mprint(f"motion GRU (frozen=True), grid_to_vision projector {training_args.tune_motion_gru}")
+            motion_encoder.projector.requires_grad_(training_args.tune_motion_gru)
+            mprint(f"motion GRU (frozen=True), projector {training_args.tune_motion_gru}")
 
         if not any(
             [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector]

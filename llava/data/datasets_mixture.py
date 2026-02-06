@@ -81,8 +81,8 @@ def register_datasets_mixtures():
     envdrop = Dataset(
         dataset_name="envdrop",
         dataset_type="envdrop",
-        data_path="/PATH_TO_DATA/NaVILA-Dataset/EnvDrop/annotations.json",
-        image_path="/PATH_TO_DATA/NaVILA-Dataset/EnvDrop/videos",
+        data_path="/home/rithvik/NaVILA-Dataset/EnvDrop/annotations.json",
+        image_path="/home/rithvik/NaVILA-Dataset/EnvDrop/videos",
         description="VLN_CE Envdrop.",
     )
     add_dataset(envdrop)
@@ -90,8 +90,8 @@ def register_datasets_mixtures():
     scanqa = Dataset(
         dataset_name="scanqa",
         dataset_type="torch",
-        data_path="/PATH_TO_DATA/NaVILA-Dataset/ScanQA/annotations/ScanQA_v1.0_train_reformat.json",
-        image_path="/PATH_TO_DATA/NaVILA-Dataset/ScanQA/videos",
+        data_path="/home/rithvik/NaVILA-Dataset/ScanQA/annotations/ScanQA_v1.0_train_reformat.json",
+        image_path="/home/rithvik/NaVILA-Dataset/ScanQA/videos",
         description="ScanQA training set.",
     )
     add_dataset(scanqa)
@@ -99,8 +99,8 @@ def register_datasets_mixtures():
     r2r = Dataset(
         dataset_name="r2r",
         dataset_type="vlnce",
-        data_path="/PATH_TO_DATA/NaVILA-Dataset/R2R/annotations.json",
-        image_path="/PATH_TO_DATA/NaVILA-Dataset/R2R/train",
+        data_path="/home/rithvik/NaVILA-Dataset/R2R/annotations.json",
+        image_path="/home/rithvik/NaVILA-Dataset/R2R/train",
         description="350K VLN-CE R2R data. (augmented aith duplicate samples)",
     )
     add_dataset(r2r)
@@ -108,8 +108,8 @@ def register_datasets_mixtures():
     rxr = Dataset(
         dataset_name="rxr",
         dataset_type="vlnce",
-        data_path="/PATH_TO_DATA/NaVILA-Dataset/RxR/annotations.json",
-        image_path="/PATH_TO_DATA/NaVILA-Dataset/RxR/train",
+        data_path="/home/rithvik/NaVILA-Dataset/RxR/annotations.json",
+        image_path="/home/rithvik/NaVILA-Dataset/RxR/train",
         description="400K RxR data. (augmented aith duplicate stops only - 5x)",
     )
     add_dataset(rxr)
@@ -117,8 +117,8 @@ def register_datasets_mixtures():
     human = Dataset(
         dataset_name="human",
         dataset_type="vlnce",
-        data_path="/PATH_TO_DATA/NaVILA-Dataset/Human/annotations.json",
-        image_path="/PATH_TO_DATA/NaVILA-Dataset/Human/raw_frames/",
+        data_path="/home/rithvik/NaVILA-Dataset/Human/annotations.json",
+        image_path="/home/rithvik/NaVILA-Dataset/Human/raw_frames/",
         description="560K Real augmented, no direction is included. (augmented aith duplicate stops only - 5x)",
     )
     add_dataset(human)
