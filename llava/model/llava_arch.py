@@ -872,9 +872,12 @@ class LlavaMetaForCausalLM(ABC):
         attention_mask: Optional[torch.LongTensor] = None,
         **generation_kwargs,
     ):
+        # Extract pose_deltas if present (not passed to LLM generate)
+        pose_deltas = generation_kwargs.pop('pose_deltas', None)
+        
         if images is not None:
             (_, _, attention_mask, _, inputs_embeds, _) = self.prepare_inputs_labels_for_multimodal(
-                input_ids, None, attention_mask, None, None, images
+                input_ids, None, attention_mask, None, None, images, pose_deltas=pose_deltas
             )
         else:
             inputs_embeds = self.get_input_embeddings()(input_ids)

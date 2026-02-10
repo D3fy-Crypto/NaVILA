@@ -91,6 +91,7 @@ class LlavaLlamaModel(LlavaMetaModel, LlavaMetaForCausalLM, PreTrainedModel):
         self,
         input_ids: torch.LongTensor = None,
         images: Optional[torch.FloatTensor] = None,
+        pose_deltas: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
@@ -114,7 +115,7 @@ class LlavaLlamaModel(LlavaMetaModel, LlavaMetaForCausalLM, PreTrainedModel):
                 inputs_embeds,
                 labels,
             ) = self.prepare_inputs_labels_for_multimodal(
-                input_ids, position_ids, attention_mask, past_key_values, labels, images
+                input_ids, position_ids, attention_mask, past_key_values, labels, images, pose_deltas
             )
 
         support_packing = "seqlens_in_batch" in inspect.signature(self.llm.forward).parameters
