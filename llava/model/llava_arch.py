@@ -18,6 +18,7 @@ import os.path as osp
 import warnings
 from abc import ABC
 from collections import OrderedDict
+import json
 from typing import List, Optional, Union
 
 import torch
@@ -90,6 +91,29 @@ class LlavaMetaModel(ABC):
                 f"[Model] ✅ MotionEncoder initialized "
                 f"(projector_dim={motion_projector_intermediate_dim}, output_dim={config.hidden_size})"
             )
+
+            # Resume motion encoder weights from checkpoint directory if available.
+            resume_path = getattr(config, "resume_path", None)
+            if resume_path is not None:
+                motion_ckpt_path = osp.join(resume_path, "motion_encoder", "pytorch_model.bin")
+                if osp.isfile(motion_ckpt_path):
+                    logging.info(f"[Model] Loading motion encoder weights from {motion_ckpt_path}")
+                    motion_ckpt = torch.load(motion_ckpt_path, map_location="cpu", weights_only=False)
+                    gru_state = motion_ckpt.get("gru", {})
+                    projector_state = motion_ckpt.get("projector", {})
+                    gru_result = self.motion_encoder.gru.load_state_dict(gru_state, strict=False)
+                    proj_result = self.motion_encoder.projector.load_state_dict(projector_state, strict=False)
+                    if len(gru_result.missing_keys) or len(gru_result.unexpected_keys):
+                        logging.warning(
+                            f"[Model] Motion GRU load strictness warning: "
+                            f"missing={len(gru_result.missing_keys)}, unexpected={len(gru_result.unexpected_keys)}"
+                        )
+                    if len(proj_result.missing_keys) or len(proj_result.unexpected_keys):
+                        logging.warning(
+                            f"[Model] Motion projector load strictness warning: "
+                            f"missing={len(proj_result.missing_keys)}, unexpected={len(proj_result.unexpected_keys)}"
+                        )
+                    logging.info("[Model] ✅ Motion encoder weights restored from checkpoint")
             logging.info("="*80)
         else:
             self.motion_encoder = None
@@ -206,6 +230,51 @@ class LlavaMetaModel(ABC):
                 state_dict=mm_projector_state_dict,
             )
             self.config.mm_projector_cfg = self.mm_projector.config
+
+        if self.get_motion_encoder():
+            motion_dir = osp.join(output_dir, "motion_encoder")
+            os.makedirs(motion_dir, exist_ok=True)
+            print(f"saving motion_encoder to {motion_dir}")
+
+            motion_state_dict = OrderedDict(
+                {
+                    k.split("motion_encoder.")[-1]: v.detach().cpu()
+                    for k, v in state_dict.items()
+                    if k.startswith("motion_encoder.")
+                }
+            )
+            motion_gru_state = OrderedDict(
+                {k.split("gru.")[-1]: v for k, v in motion_state_dict.items() if k.startswith("gru.")}
+            )
+            motion_projector_state = OrderedDict(
+                {k.split("projector.")[-1]: v for k, v in motion_state_dict.items() if k.startswith("projector.")}
+            )
+
+            torch.save(
+                {
+                    "gru": motion_gru_state,
+                    "projector": motion_projector_state,
+                    "config": {
+                        "gru_hidden_size": self.get_motion_encoder().gru.hidden_size,
+                        "gru_num_layers": self.get_motion_encoder().gru.num_layers,
+                        "gru_embedding_dim": self.get_motion_encoder().gru.embedding_dim,
+                        "output_dim": self.get_motion_encoder().projector.output_dim,
+                    },
+                },
+                osp.join(motion_dir, "pytorch_model.bin"),
+            )
+            with open(osp.join(motion_dir, "config.json"), "w") as f:
+                json.dump(
+                    {
+                        "model_type": "motion_encoder",
+                        "gru_ckpt_path": getattr(self.config, "gru_ckpt_path", None),
+                        "motion_projector_intermediate_dim": getattr(
+                            self.config, "motion_projector_intermediate_dim", None
+                        ),
+                    },
+                    f,
+                    indent=2,
+                )
         ## update and save top-level config
         self.config._name_or_path = output_dir
         self.config.architectures = [self.__class__.__name__]
