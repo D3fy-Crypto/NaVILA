@@ -746,6 +746,15 @@ class LLaVATrainer(Trainer):
 
         return self.optimizer
 
+    def training_step(self, model, inputs, *args, **kwargs):
+        """
+        Capture gradient norms right after backward() and before optimizer/zero_grad.
+        """
+        loss = super().training_step(model, inputs, *args, **kwargs)
+        if hasattr(self, "gru_monitor") and self.gru_monitor is not None:
+            self.gru_monitor.capture_gradient_norms()
+        return loss
+
     def save_model(self, output_dir: Optional[str], _internal_call: bool):
         ## save tuned model separately
         if self.is_deepspeed_enabled:
@@ -781,9 +790,9 @@ class LLaVATrainer(Trainer):
             logs["num_input_tokens_seen"] = self.state.num_input_tokens_seen
 
         # ========== GRU Gradient Monitoring ==========
-        # Add gradient norms for motion encoder components
-        if hasattr(self, 'gru_monitor') and self.gru_monitor is not None:
-            gradient_metrics = self.gru_monitor.log_gradient_norms()
+        # Use gradients captured in training_step() before zero_grad().
+        if hasattr(self, "gru_monitor") and self.gru_monitor is not None:
+            gradient_metrics = self.gru_monitor.get_last_gradient_metrics()
             if gradient_metrics:
                 logs.update(gradient_metrics)
         # ============================================

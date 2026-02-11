@@ -105,20 +105,25 @@ class GridToVisionProjector(nn.Module):
     def __init__(
         self,
         embedding_dim=128,
-        intermediate_dim=256,
+        intermediate_dim=512,
         output_dim=4096,
         dropout=0.1,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.output_dim = output_dim
-        
-        self.layers = nn.Sequential(
-            nn.Linear(embedding_dim, intermediate_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(intermediate_dim, output_dim),
-        )
+
+        # Pre-norm + staged expansion improves stability for large output projections.
+        self.input_norm = nn.LayerNorm(embedding_dim)
+        self.expand = nn.Linear(embedding_dim, intermediate_dim)
+        self.expand_norm = nn.LayerNorm(intermediate_dim)
+        self.act = nn.SiLU()
+        self.dropout = nn.Dropout(dropout)
+        self.out_proj = nn.Linear(intermediate_dim, output_dim)
+
+        # Residual shortcut directly to output space, gated for stable warmup.
+        self.residual_proj = nn.Linear(embedding_dim, output_dim, bias=False)
+        self.residual_gate = nn.Parameter(torch.zeros(1))
     
     def forward(self, motion_embeddings):
         """
@@ -128,7 +133,16 @@ class GridToVisionProjector(nn.Module):
         Returns:
             motion_tokens: [batch, output_dim] tokens in LLM space
         """
-        motion_tokens = self.layers(motion_embeddings)  # [batch, output_dim]
+        x = self.input_norm(motion_embeddings)
+        h = self.expand(x)
+        h = self.act(h)
+        h = self.expand_norm(h)
+        h = self.dropout(h)
+        main_path = self.out_proj(h)
+
+        residual = self.residual_proj(x)
+        gate = torch.tanh(self.residual_gate)
+        motion_tokens = main_path + gate * residual  # [batch, output_dim]
         return motion_tokens
 
 
@@ -144,7 +158,7 @@ class MotionEncoderWithProjector(nn.Module):
         gru_hidden_size=256,
         gru_num_layers=2,
         gru_embedding_dim=128,
-        projector_intermediate_dim=256,
+        projector_intermediate_dim=512,
         output_dim=4096,
         freeze_gru=True,
         dropout=0.1,

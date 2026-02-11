@@ -66,6 +66,10 @@ class ModelArguments:
     
     # Motion/GRU-related
     gru_ckpt_path: Optional[str] = field(default=None, metadata={"help": "Path to pretrained MotionGRU checkpoint"})
+    motion_projector_intermediate_dim: int = field(
+        default=512,
+        metadata={"help": "Hidden width for motion projector MLP before projecting to LLM hidden size"},
+    )
 
 
 @dataclass

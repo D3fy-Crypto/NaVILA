@@ -45,6 +45,7 @@ class LlavaConfig(PretrainedConfig):
         num_time_tokens=None,
         time_token_format=None,
         gru_ckpt_path=None,
+        motion_projector_intermediate_dim=512,
         **kwargs,
     ):
         super().__init__()
@@ -73,3 +74,4 @@ class LlavaConfig(PretrainedConfig):
         self.num_time_tokens = num_time_tokens
         self.time_token_format = time_token_format
         self.gru_ckpt_path = gru_ckpt_path
+        self.motion_projector_intermediate_dim = motion_projector_intermediate_dim

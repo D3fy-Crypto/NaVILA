@@ -20,6 +20,7 @@ class GRUTrainingMonitor:
         self.log_every_n_steps = log_every_n_steps
         self.step = 0
         self.first_log = True
+        self.last_gradient_metrics = {}
     
     def log_model_status(self):
         """Log model parameter statistics at start of training."""
@@ -79,8 +80,8 @@ class GRUTrainingMonitor:
         
         self.first_log = False
     
-    def log_gradient_norms(self):
-        """Log gradient norms for trainable modules."""
+    def capture_gradient_norms(self):
+        """Capture gradient norms immediately after backward (before zero_grad)."""
         self.step += 1
         
         if self.step % self.log_every_n_steps != 0:
@@ -124,13 +125,24 @@ class GRUTrainingMonitor:
                     g2v_grad_count += 1
                     g2v_grad_norm += p.grad.norm().item() ** 2
             g2v_grad_norm = g2v_grad_norm ** 0.5
+            # Keep both names for backward compatibility in dashboards.
             metrics['grad_norm/grid_to_vision'] = g2v_grad_norm
+            metrics['grad_norm/motion_projector'] = g2v_grad_norm
             
             if self.step % (self.log_every_n_steps * 10) == 0:
                 logger.info(f"[Step {self.step}] motion_gru: {gru_grad_count} grads, norm={gru_grad_norm:.6f}")
                 logger.info(f"[Step {self.step}] grid_to_vision: {g2v_grad_count} grads, norm={g2v_grad_norm:.6f}")
         
+        self.last_gradient_metrics = metrics
         return metrics
+
+    def get_last_gradient_metrics(self):
+        """Return latest captured gradient metrics."""
+        return self.last_gradient_metrics
+
+    def log_gradient_norms(self):
+        """Backward-compatible alias used by older call sites."""
+        return self.capture_gradient_norms()
 
 
 def add_training_hooks(model, log_every_n_steps=10):

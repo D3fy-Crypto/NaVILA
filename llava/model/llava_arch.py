@@ -73,6 +73,7 @@ class LlavaMetaModel(ABC):
         # Initialize motion encoder if GRU checkpoint path is provided
         gru_ckpt_path = getattr(config, "gru_ckpt_path", None)
         if gru_ckpt_path is not None:
+            motion_projector_intermediate_dim = getattr(config, "motion_projector_intermediate_dim", 512)
             logging.info("="*80)
             logging.info("[Model] Initializing MotionEncoder with GRU integration")
             self.motion_encoder = MotionEncoderWithProjector(
@@ -80,12 +81,15 @@ class LlavaMetaModel(ABC):
                 gru_hidden_size=256,
                 gru_num_layers=2,
                 gru_embedding_dim=128,
-                projector_intermediate_dim=256,
+                projector_intermediate_dim=motion_projector_intermediate_dim,
                 output_dim=config.hidden_size,
                 freeze_gru=True,
                 dropout=0.1,
             )
-            logging.info(f"[Model] ✅ MotionEncoder initialized (output_dim={config.hidden_size})")
+            logging.info(
+                f"[Model] ✅ MotionEncoder initialized "
+                f"(projector_dim={motion_projector_intermediate_dim}, output_dim={config.hidden_size})"
+            )
             logging.info("="*80)
         else:
             self.motion_encoder = None
@@ -345,7 +349,7 @@ class LlavaMetaForCausalLM(ABC):
             if type(pose_deltas) is list:
                 pose_deltas = torch.cat(pose_deltas, dim=0)
             motion_features = self.get_motion_encoder()(pose_deltas).to(self.device)
-            if hasattr(self, '_log_motion_once') and not self._log_motion_once:
+            if not getattr(self, "_log_motion_once", False):
                 logging.info(f"[Forward] Motion encoding: {pose_deltas.shape} → {motion_features.shape}")
                 self._log_motion_once = True
         
@@ -396,8 +400,35 @@ class LlavaMetaForCausalLM(ABC):
                 cur_image_features = image_features[0]
                 cur_input_embeds_1 = input_embeds_1[batch_idx]
                 cur_input_embeds = torch.cat([cur_input_embeds_1, cur_image_features[0:0]], dim=0)
+                cur_labels = labels[batch_idx]
+
+                # For text-only samples, place motion token before the first supervised label.
+                if motion_features is not None and batch_idx < motion_features.shape[0]:
+                    cur_motion_features = motion_features[batch_idx:batch_idx + 1]  # [1, hidden_dim]
+                    supervised_pos = torch.where(cur_labels != IGNORE_INDEX)[0]
+                    if supervised_pos.numel() > 0:
+                        insert_idx = int(supervised_pos[0].item())
+                    else:
+                        insert_idx = cur_input_embeds.shape[0]
+                    cur_input_embeds = torch.cat(
+                        [cur_input_embeds[:insert_idx], cur_motion_features, cur_input_embeds[insert_idx:]], dim=0
+                    )
+                    cur_labels = torch.cat(
+                        [
+                            cur_labels[:insert_idx],
+                            torch.full(
+                                (1,),
+                                IGNORE_INDEX,
+                                device=cur_labels.device,
+                                dtype=cur_labels.dtype,
+                            ),
+                            cur_labels[insert_idx:],
+                        ],
+                        dim=0,
+                    )
+
                 new_input_embeds.append(cur_input_embeds)
-                new_labels.append(labels[batch_idx])
+                new_labels.append(cur_labels)
                 # kenang-mit@: we do not have placeholdr image for text-only data now.
                 continue
 
@@ -421,7 +452,29 @@ class LlavaMetaForCausalLM(ABC):
 
             cur_new_input_embeds = []
             cur_new_labels = []
+            cur_motion_inserted = False
+            cur_motion_features = None
+            if motion_features is not None and batch_idx < motion_features.shape[0]:
+                cur_motion_features = motion_features[batch_idx:batch_idx + 1]  # [1, hidden_dim]
             for i in range(num_images + 1):
+                # Insert motion token right before the first supervised assistant segment.
+                if cur_motion_features is not None and not cur_motion_inserted:
+                    has_supervised_label = (
+                        cur_labels_noim[i].numel() > 0
+                        and torch.any(cur_labels_noim[i] != IGNORE_INDEX).item()
+                    )
+                    if has_supervised_label:
+                        cur_new_input_embeds.append(cur_motion_features)
+                        cur_new_labels.append(
+                            torch.full(
+                                (cur_motion_features.shape[0],),
+                                IGNORE_INDEX,
+                                device=cur_labels.device,
+                                dtype=cur_labels.dtype,
+                            )
+                        )
+                        cur_motion_inserted = True
+
                 cur_new_input_embeds.append(cur_input_embeds_no_im[i])
                 cur_new_labels.append(cur_labels_noim[i])
                 if i < num_images:
@@ -437,9 +490,8 @@ class LlavaMetaForCausalLM(ABC):
                         )
                     )
             
-            # Inject motion tokens after all images (if available)
-            if motion_features is not None and batch_idx < motion_features.shape[0]:
-                cur_motion_features = motion_features[batch_idx:batch_idx+1]  # [1, hidden_dim]
+            # Fallback: if no supervised labels exist, append motion token at the end.
+            if cur_motion_features is not None and not cur_motion_inserted:
                 cur_new_input_embeds.append(cur_motion_features)
                 cur_new_labels.append(
                     torch.full(

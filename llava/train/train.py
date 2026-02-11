@@ -436,11 +436,20 @@ def train():
         print(f"Models has been ready under {training_args.output_dir}. Skipp training")
         exit(0)
 
+    # Only resume from checkpoints that have minimum required metadata.
+    # Stale/incomplete checkpoint folders can exist after interrupted runs.
+    if resume_path and not os.path.isfile(os.path.join(resume_path, "trainer_state.json")):
+        logging.warning(
+            f"Found checkpoint candidate at {resume_path}, but trainer_state.json is missing. "
+            "Starting fresh and ignoring this stale checkpoint."
+        )
+        resume_path = None
+
     if resume_path:
-        resume_from_checkpoint = True
+        resume_from_checkpoint = resume_path
         if training_args.lora_enable:
             model_cls = LlavaLlamaModel
-            config = LlavaLlamaConfig.from_pretrained(model_args.model_name_or_path, resume=resume_from_checkpoint)
+            config = LlavaLlamaConfig.from_pretrained(model_args.model_name_or_path, resume=True)
             config.resume_path = model_args.model_name_or_path
         else:
             config = AutoConfig.from_pretrained(resume_path, trust_remote_code=True)
@@ -468,7 +477,7 @@ def train():
         else:
             ## llm and default multimodal model
             model_cls = LlavaLlamaModel
-            config = LlavaLlamaConfig.from_pretrained(model_args.model_name_or_path, resume=resume_from_checkpoint)
+            config = LlavaLlamaConfig.from_pretrained(model_args.model_name_or_path, resume=False)
         if getattr(config, "resume_path", None) is not None:
             config.resume_path = model_args.model_name_or_path
 
@@ -638,6 +647,16 @@ def train():
             [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector, training_args.tune_motion_gru]
         ):
             logging.warning("You are not tuning any part of the model. Please check if this is intended.")
+
+    # Explicit startup sanity check: what is actually trainable?
+    trainable = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    mprint(f"Trainable tensors: {len(trainable)}")
+    for name, param in trainable[:50]:
+        mprint(f"  {name}: {tuple(param.shape)}")
+
+    for key in ["motion_encoder.projector", "motion_encoder.gru", "grid_to_vision", "residual_gate"]:
+        hits = [n for n, _ in trainable if key in n]
+        mprint(f"Trainable key check [{key}]: {hits[:10]}")
 
     # @yunhao: tokenizer instantiation is moved into build_llm
     tokenizer = model.tokenizer

@@ -9,14 +9,14 @@
 # - Expected time: 20-30 minutes on 1 GPU
 # =============================================================================
 
-set -e
+set -euo pipefail
 
 # Activate conda environment
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate navila-eval
 
 # Use correct codebase (brain_inspired version with GRU support)
-export PYTHONPATH="/home/rithvik/NaVILA_Env/brain_inspired/NaVILA:$PYTHONPATH"
+export PYTHONPATH="/home/rithvik/NaVILA_Env/brain_inspired/NaVILA:${PYTHONPATH:-}"
 
 # Environment setup
 export GPUS_PER_NODE=1
@@ -26,8 +26,9 @@ export CURRENT_RANK=0
 export MASTER_ADDR="127.0.0.1"
 
 # Create output directory
-OUTPUT="./checkpoints/navila-8b-8f-gru-sanity-check-feb10"
+OUTPUT="./checkpoints/navila-8b-8f-gru-sanity-check-$(date +%Y%m%d_%H%M%S)"
 mkdir -p $OUTPUT
+export OUTPUT
 
 # Paths to trained components
 GRU_CKPT="./evaluation/checkpoints/motion_gru_infonce.pt"
@@ -97,6 +98,7 @@ torchrun \
     --lazy_preprocess=True \
     --report_to=wandb \
     --gru_ckpt_path=$GRU_CKPT \
+    --motion_projector_intermediate_dim=512 \
     --pose_deltas_path=$ORACLE_DELTAS \
     2>&1 | tee $OUTPUT/sanity_check.log
 
@@ -112,9 +114,10 @@ echo ""
 python3 << 'EOF'
 import re
 import sys
+import os
 from pathlib import Path
 
-log_file = Path("$OUTPUT/sanity_check.log")
+log_file = Path(os.environ["OUTPUT"]) / "sanity_check.log"
 if not log_file.exists():
     print("❌ Log file not found!")
     sys.exit(1)
@@ -156,7 +159,7 @@ else:
     print("   ✅ No errors detected")
 
 print("")
-print("📝 Log file: ./checkpoints/navila-8b-8f-gru-sanity-check/sanity_check.log")
+print(f"📝 Log file: {log_file}")
 EOF
 
 echo ""

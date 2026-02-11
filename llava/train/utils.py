@@ -100,6 +100,7 @@ def prepare_config_for_training(
     config.tune_motion_gru = getattr(training_args, "tune_motion_gru", False)
     # set motion/GRU configuration
     config.gru_ckpt_path = getattr(model_args, "gru_ckpt_path", None)
+    config.motion_projector_intermediate_dim = getattr(model_args, "motion_projector_intermediate_dim", 512)
     # set data args
     # Get the image_aspect_ratio from the config if is defined there
     # (case of resuming from a checkpoint) or from the data_args

@@ -40,12 +40,12 @@ class SaveFinalModelCallback(TrainerCallback):
             motion_encoder = model.get_motion_encoder()
             save_dict['motion_encoder'] = {
                 'gru': motion_encoder.gru.state_dict(),
-                'projector': motion_encoder.grid_to_vision.state_dict(),
+                'projector': motion_encoder.projector.state_dict(),
                 'config': {
                     'gru_hidden_size': motion_encoder.gru.hidden_size,
                     'gru_num_layers': motion_encoder.gru.num_layers,
                     'gru_embedding_dim': motion_encoder.gru.embedding_dim,
-                    'output_dim': motion_encoder.output_dim,
+                    'output_dim': motion_encoder.projector.output_dim,
                 }
             }
             print("✅ Motion encoder (GRU + Projector) included in checkpoint")
@@ -83,7 +83,7 @@ class SaveFinalModelCallback(TrainerCallback):
             if hasattr(model, 'get_motion_encoder') and model.get_motion_encoder() is not None:
                 motion_encoder = model.get_motion_encoder()
                 gru_params = sum(p.numel() for p in motion_encoder.gru.parameters())
-                proj_params = sum(p.numel() for p in motion_encoder.grid_to_vision.parameters())
+                proj_params = sum(p.numel() for p in motion_encoder.projector.parameters())
                 
                 f.write("Motion Encoder Components:\n")
                 f.write(f"  GRU: {gru_params:,} parameters (frozen)\n")
