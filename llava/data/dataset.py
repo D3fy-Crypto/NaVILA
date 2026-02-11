@@ -2290,7 +2290,7 @@ class LazyVLNCEDataset(Dataset):
                 data_dict["labels"][:] = IGNORE_INDEX
             
             # Load pose deltas for motion encoding if available
-            video_id = sources[0].get("video_id") if isinstance(sources[0], dict) else None
+            video_id = self.list_data_dict[i].get("video_id")
             pose_deltas = self._load_pose_deltas(video_id, num_video_frames)
             if pose_deltas is not None:
                 data_dict["pose_deltas"] = pose_deltas
@@ -2303,17 +2303,30 @@ class LazyVLNCEDataset(Dataset):
         Load and process pose deltas for a video.
         
         Args:
-            video_id: Episode/video ID to lookup in pose_deltas dict
+            video_id: Episode/video ID to lookup in pose_deltas dict (e.g., "914-23" or just 914)
             num_frames: Number of frames that were sampled
         
         Returns:
             torch.Tensor of shape [num_frames, 4] with normalized pose deltas,
             or None if not available
         """
-        if video_id is None or video_id not in self.pose_deltas:
+        if video_id is None:
             return None
         
-        deltas_list = self.pose_deltas[video_id]
+        # Convert video_id to episode_id (int)
+        # video_id format could be "914-23" -> extract 914, or just an int
+        if isinstance(video_id, str):
+            try:
+                episode_id = int(video_id.split('-')[0])
+            except (ValueError, IndexError):
+                return None
+        else:
+            episode_id = int(video_id)
+        
+        if episode_id not in self.pose_deltas:
+            return None
+        
+        deltas_list = self.pose_deltas[episode_id]
         if not deltas_list or len(deltas_list) == 0:
             return None
         
@@ -2355,7 +2368,7 @@ class DataCollatorForSupervisedDataset:
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         # input_ids, labels = tuple([instance[key] for instance in instances]
         #                           for key in ("input_ids", "labels"))
-        input_ids, labels, images = [], [], []
+        input_ids, labels, images, pose_deltas = [], [], [], []
         for instance in instances:
             if not isinstance(instance["input_ids"], list):
                 input_ids.append(instance["input_ids"])
@@ -2379,6 +2392,16 @@ class DataCollatorForSupervisedDataset:
                     images.extend(cur_image.chunk(cur_image.size(0), 0))
             else:
                 images.append([])
+            # Collect pose_deltas for motion encoding
+            if instance.get("pose_deltas") is not None:
+                if not isinstance(instance["input_ids"], list):
+                    pose_deltas.append(instance["pose_deltas"])
+                else:
+                    # For packed samples, replicate pose_deltas
+                    num_samples = len(instance["input_ids"])
+                    pose_deltas.extend([instance["pose_deltas"]] * num_samples)
+            else:
+                pose_deltas.append(None)
         # kentang-mit@: we need to make sure these two lists have
         # the same length. We will use input_ids to filter out images corresponding
         # to truncated <image> tokens later.
@@ -2421,6 +2444,23 @@ class DataCollatorForSupervisedDataset:
                 crop_size = self.data_args.image_processor.size
             # we still need 1 dummy image for the vision tower
             batch["images"] = torch.zeros(1, 3, crop_size["height"], crop_size["width"])
+
+        # Add pose_deltas to batch for motion encoding
+        valid_pose_deltas = [pd for pd in pose_deltas if pd is not None]
+        if len(valid_pose_deltas) > 0:
+            # Stack pose deltas - they should all have shape [num_frames, 4]
+            try:
+                batch["pose_deltas"] = torch.stack(valid_pose_deltas)
+            except RuntimeError:
+                # If shapes don't match, pad to max length
+                max_len = max(pd.shape[0] for pd in valid_pose_deltas)
+                padded = []
+                for pd in valid_pose_deltas:
+                    if pd.shape[0] < max_len:
+                        padding = torch.zeros(max_len - pd.shape[0], pd.shape[1], dtype=pd.dtype, device=pd.device)
+                        pd = torch.cat([pd, padding], dim=0)
+                    padded.append(pd)
+                batch["pose_deltas"] = torch.stack(padded)
 
         return batch
 

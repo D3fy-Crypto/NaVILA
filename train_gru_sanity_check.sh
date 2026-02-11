@@ -13,7 +13,10 @@ set -e
 
 # Activate conda environment
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate navila
+conda activate navila-eval
+
+# Use correct codebase (brain_inspired version with GRU support)
+export PYTHONPATH="/home/rithvik/NaVILA_Env/brain_inspired/NaVILA:$PYTHONPATH"
 
 # Environment setup
 export GPUS_PER_NODE=1
@@ -23,7 +26,7 @@ export CURRENT_RANK=0
 export MASTER_ADDR="127.0.0.1"
 
 # Create output directory
-OUTPUT="./checkpoints/navila-8b-8f-gru-sanity-check"
+OUTPUT="./checkpoints/navila-8b-8f-gru-sanity-check-feb10"
 mkdir -p $OUTPUT
 
 # Paths to trained components
@@ -38,8 +41,8 @@ echo "Output Directory: $OUTPUT"
 echo "GRU Checkpoint: $GRU_CKPT"
 echo "Oracle Deltas: $ORACLE_DELTAS"
 echo "Max Samples: 10000 (10k samples)"
-echo "Epochs: 0.1 (10% of 1 epoch)"
-echo "Expected Time: 20-30 minutes"
+echo "Epochs: 0.05 (5% of 1 epoch)"
+echo "Expected Time: 10-15 minutes"
 echo ""
 echo "Validating:"
 echo "  ✓ Loss decreases"
@@ -56,7 +59,6 @@ torchrun \
     --master_port=$MASTER_PORT \
     llava/train/train_mem.py \
     --longvila_sampler=True \
-    --deepspeed=./scripts/zero3.json \
     --model_name_or_path=a8cheng/navila-siglip-llama3-8b-v1.5-pretrain \
     --version=llama_3 \
     --seed=42 \
@@ -66,20 +68,22 @@ torchrun \
     --mm_projector=mlp_downsample \
     --num_video_frames=8 \
     --tune_vision_tower=False \
-    --tune_mm_projector=True \
+    --tune_mm_projector=False \
     --tune_language_model=False \
-    --tune_motion_gru=False \
+    --tune_motion_gru=True \
     --mm_vision_select_layer=-2 \
     --mm_use_im_start_end=False \
     --mm_use_im_patch_token=False \
     --image_aspect_ratio=resize \
     --bf16=True \
     --output_dir=$OUTPUT \
-    --num_train_epochs=0.1 \
+    --num_train_epochs=0.05 \
     --per_device_train_batch_size=1 \
     --gradient_accumulation_steps=16 \
     --do_eval=False \
-    --save_strategy=no \
+    --save_strategy=steps \
+    --save_steps=200 \
+    --save_total_limit=2 \
     --fps=0.0 \
     --learning_rate=1e-4 \
     --weight_decay=0.01 \
@@ -88,10 +92,10 @@ torchrun \
     --logging_steps=5 \
     --tf32=True \
     --model_max_length=4096 \
-    --gradient_checkpointing=True \
+    --gradient_checkpointing=False \
     --dataloader_num_workers=8 \
     --lazy_preprocess=True \
-    --report_to=none \
+    --report_to=wandb \
     --gru_ckpt_path=$GRU_CKPT \
     --pose_deltas_path=$ORACLE_DELTAS \
     2>&1 | tee $OUTPUT/sanity_check.log

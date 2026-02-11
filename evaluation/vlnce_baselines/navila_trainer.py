@@ -363,7 +363,8 @@ class NaVILATrainer(BaseVLNCETrainer):
                     )
 
                     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-                    keywords = [stop_str]
+                    # Add newline and period as stop tokens to prevent rambling
+                    keywords = [stop_str, "\n", ".\n"]
                     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
 
                     with torch.inference_mode():
@@ -371,12 +372,12 @@ class NaVILATrainer(BaseVLNCETrainer):
                             input_ids,
                             images=images_tensor.half().cuda(),
                             pose_deltas=pose_deltas_tensor,
-                            do_sample=False,
-                            temperature=0.0,
-                            max_new_tokens=32,
+                            do_sample=False,  # Greedy decoding
+                            max_new_tokens=24,  # Shorter to avoid rambling
                             use_cache=True,
                             stopping_criteria=[stopping_criteria],
                             pad_token_id=tokenizer.eos_token_id,
+                            eos_token_id=tokenizer.eos_token_id,
                         )
 
                     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
@@ -391,30 +392,32 @@ class NaVILATrainer(BaseVLNCETrainer):
                     print(f"[MODEL OUTPUT]: '{outputs}'")
                     print("=" * 50)
 
-                    # Define the regex patterns for each action (more flexible matching)
-                    patterns = {
-                        0: re.compile(r"\bstop\b|\bcompleted\b|\bfinish", re.IGNORECASE),
-                        1: re.compile(r"move forward|forward", re.IGNORECASE),
-                        2: re.compile(r"turn left|left", re.IGNORECASE),
-                        3: re.compile(r"turn right|right", re.IGNORECASE),
-                    }
-
-                    # Function to map a string to an action integer
+                    # Define the regex patterns for each action
+                    # Order matters: check specific actions before stop to avoid false positives
                     def map_string_to_action(s):
-                        for action, pattern in patterns.items():
-                            if pattern.search(s):
-                                return action
-                        return None  # Return None if no match is found
+                        s_lower = s.lower()
+                        # Check for movement actions first (more specific)
+                        if re.search(r"move forward|forward \d+", s_lower):
+                            return 1
+                        if re.search(r"turn left|left \d+", s_lower):
+                            return 2
+                        if re.search(r"turn right|right \d+", s_lower):
+                            return 3
+                        # Check for stop/completed
+                        if re.search(r"\bstop\b|\bcompleted\b|\bfinished\b|\bdone\b", s_lower):
+                            return 0
+                        return None
 
                     try:
                         actions = [map_string_to_action(outputs)]
-                        # If no action matched, default to FORWARD (not STOP) to keep exploring
+                        # If no action matched, default to STOP (safer than random walking)
                         if actions[0] is None:
-                            print(f"[WARNING] No action pattern matched, defaulting to FORWARD")
-                            actions = [1]
-                    except:
-                        actions = [1]
-                    print(f"[PARSED ACTION]: {actions}")
+                            print(f"[WARNING] No action pattern matched in '{outputs}', defaulting to STOP")
+                            actions = [0]
+                    except Exception as e:
+                        print(f"[ERROR] Action parsing failed: {e}, defaulting to STOP")
+                        actions = [0]
+                    print(f"[PARSED ACTION]: {actions} (0=STOP, 1=FWD, 2=LEFT, 3=RIGHT)")
 
                 if actions[0] == 1:
                     try:

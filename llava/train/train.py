@@ -635,7 +635,7 @@ def train():
             mprint(f"motion GRU (frozen=True), projector {training_args.tune_motion_gru}")
 
         if not any(
-            [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector]
+            [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector, training_args.tune_motion_gru]
         ):
             logging.warning("You are not tuning any part of the model. Please check if this is intended.")
 
