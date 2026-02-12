@@ -13,5 +13,5 @@ python run.py \
     --run-type eval \
     --num-chunks 1 \
     --chunk-idx 0 \
-    EVAL_CKPT_PATH_DIR /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/checkpoints/navila-8b-8f-gru-sanity-check \
+    EVAL_CKPT_PATH_DIR /home/rithvik/NaVILA_Env/brain_inspired/NaVILA/checkpoints/navila-8b-8f-gru-sanity-check-20260211_163404/checkpoint-400 \
     EVAL.EPISODE_COUNT 100

@@ -809,7 +809,20 @@ def train():
     )
 
     # trainer.evaluate()
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    resume_arg = resume_from_checkpoint
+    # Our modular checkpoint format stores weights in subfolders (llm/, vision_tower/, mm_projector/, motion_encoder/)
+    # and may not have root-level WEIGHTS_NAME/SAFE_WEIGHTS_NAME that HF Trainer expects for strict resume.
+    # In that case, model weights are already loaded via config.resume_path above, so we skip strict Trainer resume.
+    if isinstance(resume_from_checkpoint, str):
+        hf_root_weight_files = ["pytorch_model.bin", "pytorch_model.bin.index.json", "model.safetensors", "model.safetensors.index.json"]
+        has_hf_root_weight = any(os.path.isfile(os.path.join(resume_from_checkpoint, f)) for f in hf_root_weight_files)
+        if not has_hf_root_weight:
+            logging.warning(
+                f"Checkpoint {resume_from_checkpoint} uses modular layout without root HF weight files. "
+                "Falling back to training-state reset while keeping model weights loaded from resume_path."
+            )
+            resume_arg = False
+    trainer.train(resume_from_checkpoint=resume_arg)
 
     if training_args.debug_e2e:
         exit()

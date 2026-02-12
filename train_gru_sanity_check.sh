@@ -26,7 +26,8 @@ export CURRENT_RANK=0
 export MASTER_ADDR="127.0.0.1"
 
 # Create output directory
-OUTPUT="./checkpoints/navila-8b-8f-gru-sanity-check-$(date +%Y%m%d_%H%M%S)"
+# If RESUME_OUTPUT is set, keep using that directory to resume from latest checkpoint.
+OUTPUT="${RESUME_OUTPUT:-./checkpoints/navila-8b-8f-gru-sanity-check-$(date +%Y%m%d_%H%M%S)}"
 mkdir -p $OUTPUT
 export OUTPUT
 
@@ -39,11 +40,14 @@ echo "======================================================================="
 echo "Stage 1: Sanity + Gradient Check"
 echo "======================================================================="
 echo "Output Directory: $OUTPUT"
+if [ -n "${RESUME_OUTPUT:-}" ]; then
+    echo "Resume Mode: enabled (will auto-resume from latest checkpoint in OUTPUT)"
+fi
 echo "GRU Checkpoint: $GRU_CKPT"
 echo "Oracle Deltas: $ORACLE_DELTAS"
-echo "Max Samples: 10000 (10k samples)"
-echo "Epochs: 0.05 (5% of 1 epoch)"
-echo "Expected Time: 10-15 minutes"
+echo "Max Samples: 450 samples"
+echo "Epochs: 0.02 (2% of 1 epoch)"
+echo "Expected Time: 2 hr x 1 GPU"
 echo ""
 echo "Validating:"
 echo "  ✓ Loss decreases"
@@ -78,7 +82,7 @@ torchrun \
     --image_aspect_ratio=resize \
     --bf16=True \
     --output_dir=$OUTPUT \
-    --num_train_epochs=0.05 \
+    --num_train_epochs=0.02 \
     --per_device_train_batch_size=1 \
     --gradient_accumulation_steps=16 \
     --do_eval=False \

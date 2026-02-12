@@ -187,7 +187,7 @@ class LlavaMetaModel(ABC):
         return vlm
 
     ## FIXME we will use this function to save the model in the future
-    def save_pretrained(self, output_dir, state_dict=None):
+    def save_pretrained(self, output_dir, state_dict=None, **kwargs):
         if state_dict is None:
             # other wise fetch from deepspeed
             # state_dict = accelerator.get_state_dict(is_deepspeed_enabled)
@@ -200,7 +200,7 @@ class LlavaMetaModel(ABC):
             print(f"saving llm to {osp.join(output_dir, 'llm')}")
             self.llm.config._name_or_path = osp.join(output_dir, "llm")
             llm_state_dict = OrderedDict({k.split("llm.")[-1]: v for k, v in state_dict.items() if "llm" in k})
-            self.llm.save_pretrained(os.path.join(output_dir, "llm"), state_dict=llm_state_dict)
+            self.llm.save_pretrained(os.path.join(output_dir, "llm"), state_dict=llm_state_dict, **kwargs)
             self.config.llm_cfg = self.llm.config
 
         if self.get_vision_tower():
@@ -228,6 +228,7 @@ class LlavaMetaModel(ABC):
             self.mm_projector.save_pretrained(
                 os.path.join(output_dir, "mm_projector"),
                 state_dict=mm_projector_state_dict,
+                **kwargs,
             )
             self.config.mm_projector_cfg = self.mm_projector.config
 
@@ -275,6 +276,12 @@ class LlavaMetaModel(ABC):
                     f,
                     indent=2,
                 )
+
+        # Save a root HF checkpoint file so Trainer can fully resume
+        # (model + optimizer/scheduler/global_step state restoration path).
+        root_weights_path = osp.join(output_dir, "pytorch_model.bin")
+        print(f"saving root model weights to {root_weights_path}")
+        torch.save({k: v.detach().cpu() for k, v in state_dict.items()}, root_weights_path)
         ## update and save top-level config
         self.config._name_or_path = output_dir
         self.config.architectures = [self.__class__.__name__]
