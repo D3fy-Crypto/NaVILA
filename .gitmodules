@@ -1,0 +1,9 @@
+[submodule "packages/habitat-lab"]
+	path = packages/habitat-lab
+	url = git@github.com:facebookresearch/habitat-lab.git
+[submodule "packages/habitat-sim"]
+	path = packages/habitat-sim
+	url = https://github.com/facebookresearch/habitat-sim.git
+[submodule "packages/VLN-CE"]
+	path = packages/VLN-CE
+	url = git@github.com:jacobkrantz/VLN-CE.git
