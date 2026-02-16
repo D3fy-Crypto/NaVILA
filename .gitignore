@@ -1,3 +1,5 @@
+.gitignore
+
 *.whl
 *_dev
 8b
@@ -59,3 +61,6 @@ evaluation/habitat-sim
 evaluation/data
 evaluation/eval_out
 .gitmodules
+
+
+.vscode

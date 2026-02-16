@@ -164,14 +164,24 @@ def smart_tokenizer_and_embedding_resize(
     Note: This is the unoptimized version that may make your embedding size not be divisible by 64.
     """
     num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
+    print(f"num_new_tokens: {num_new_tokens}")
+    print(f"Resizing model embeddings to {len(tokenizer)}")
     model.resize_token_embeddings(len(tokenizer))
 
     if num_new_tokens > 0:
         input_embeddings = model.get_input_embeddings().weight.data
         output_embeddings = model.get_output_embeddings().weight.data
 
+        print(f"input_embeddings shape: {input_embeddings.shape}")
+        print(f"output_embeddings shape: {output_embeddings.shape}")
+
         input_embeddings_avg = input_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
         output_embeddings_avg = output_embeddings[:-num_new_tokens].mean(dim=0, keepdim=True)
+
+        print(f"input_embeddings_avg shape: {input_embeddings_avg.shape}")
+        print(f"output_embeddings_avg shape: {output_embeddings_avg.shape}")
+        print(f"input_embeddings_avg: {input_embeddings_avg}")
+        print(f"output_embeddings_avg: {output_embeddings_avg}")
 
         input_embeddings[-num_new_tokens:] = input_embeddings_avg
         output_embeddings[-num_new_tokens:] = output_embeddings_avg
@@ -390,7 +400,10 @@ def train():
 
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
+    print("model_args:", model_args)
+    print("data_args:", data_args)
+    print("training_args:", training_args)
+    
     # FIXME(zhijianl): This should be deprecated when we move to the new scripts.
     if os.getenv("RUN_NAME") is None:
         training_args.run_name = training_args.output_dir.split("/")[-1]
@@ -399,7 +412,7 @@ def train():
     compute_dtype = torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32)
 
     bnb_model_from_pretrained_args = {}
-    if training_args.bits in [4, 8]:
+    if training_args.bits in [4, 8]:#bits=16, so not going into this block
         from transformers import BitsAndBytesConfig
 
         bnb_model_from_pretrained_args.update(
@@ -420,7 +433,7 @@ def train():
             )
         )
 
-    set_seed(training_args.seed)
+    set_seed(training_args.seed) #seed = 10
 
     sp_degree = training_args.seq_parallel_size
     ring_degree = training_args.seq_parallel_ring_size
@@ -481,7 +494,7 @@ def train():
     )
 
     if not resume_path or training_args.lora_enable:
-        if model_args.mlp_path is not None:
+        if model_args.mlp_path is not None: #mlp_path is None, so not going into this block
             state_dict = torch.load(model_args.mlp_path, map_location="cpu")
             state_dict_new = {}
             for k, v in state_dict.items():
@@ -633,15 +646,21 @@ def train():
     elif model_args.version == "v0.5":
         tokenizer.pad_token = tokenizer.unk_token
     else:
+        print("Before setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
         tokenizer.pad_token = tokenizer.unk_token
+        print("After setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
         if tokenizer.pad_token is None:
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="[PAD]"),
                 tokenizer=tokenizer,
                 model=model.llm,
             )
+        print("model_args.version:", model_args.version)
+        print("conversation_lib.conv_templates:", conversation_lib.conv_templates)
         if model_args.version in conversation_lib.conv_templates:
             conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
+            print("default_conversation:", conversation_lib.default_conversation)
+            
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
 
@@ -685,6 +704,8 @@ def train():
         else:
             model.config.time_token_ids = []
         model.config.soft_ce_std = model_args.soft_ce_std
+        print("Model config:", model.config)
+
 
     ## TODO pay attention to quantize
     if training_args.bits in [4, 8]:

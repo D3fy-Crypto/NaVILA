@@ -1,0 +1,101 @@
+ clear
+ 2111  ls
+ 2112  git clone --branch stable https://github.com/facebookresearch/habitat-sim.git
+ 2113  ls
+ 2114  cd habitat-sim/
+ 2115  git checkout v0.1.7
+ 2116  ls
+ 2117  cmake --version
+ 2118  sudo apt update
+ 2119  sudo apt install cmake
+ 2120  pip install -r requirements.txt
+ 2121  python setup.py install
+ 2122  rm -rf build/ dist/ *.egg-info
+ 2123  python setup.py install --headless --with-cuda
+ 2124  which nvcc
+ 2125  nvcc --version
+ 2126  conda deactivate
+ 2127  conda activate iros-train
+ 2128  ls
+ 2129  cd
+ 2130  cd IROS_proj/NaVILA_iros/packages/
+ 2131  ls
+ 2132  rm -rf habitat-sim/
+ 2133  git clone --branch stable https://github.com/facebookresearch/habitat-sim.git
+ 2134  cd habitat-sim/
+ 2135  git checkout v0.1.7
+ 2136  pip install -r requirements.txt
+ 2137  python setup.py install --headless --with-cuda
+ 2138  cd ~/IROS_proj/NaVILA_iros/packages/habitat-sim
+ 2139  rm -rf build dist *.egg-info
+ 2140  export CUDA_HOME=/usr/local/cuda
+ 2141  export CUDACXX=$CUDA_HOME/bin/nvcc
+ 2142  export CC=/usr/bin/gcc
+ 2143  export CXX=/usr/bin/g++
+ 2144  export CUDAHOSTCXX=/usr/bin/g++
+ 2145  # also helps prevent conda toolchain injection:
+ 2146  unset CONDA_BUILD_SYSROOT
+ 2147  unset CFLAGS CXXFLAGS LDFLAGS
+ 2148  python setup.py install --headless --with-cuda
+ 2149  echo '#include <cuda_runtime_api.h>' | g++ -E -H -xc++ - 2>&1 | head -n 40
+ 2150  find "$CONDA_PREFIX" -maxdepth 6 -name "cuda_runtime_api.h" 2>/dev/null
+ 2151  rm -rf build dist *.egg-info
+ 2152  python setup.py install --headless 
+ 2153  pip list
+ 2154  cd ..
+ 2155  git clone --branch v0.1.7 git@github.com:facebookresearch/habitat-lab.git
+ 2156  cd habitat-lab
+ 2157  python -m pip install -r requirements.txt
+ 2158  python -m pip install -r habitat_baselines/rl/requirements.txt
+ 2159  python -m pip install -r habitat_baselines/rl/ddppo/requirements.txt
+ 2160  python -m pip install -r habitat_baselines/rl/requirements.txt
+ 2161  python setup.py develop --all
+ 2162  pip list
+ 2163  cd ../
+ 2164  cd ..
+ 2165  pip install -r evaluation/requirements.txt
+ 2166  python evaluation/scripts/habitat_sim_autofix.py # replace habitat_sim/utils/common.py
+ 2167  ls
+ 2168  git status
+ 2169  git add .
+ 2170  git rm --cached packages/habitat-lab
+ 2171  git status
+ 2172  cd packages/habitat-
+ 2173  cd packages/habitat-sim/
+ 2174  git status
+ 2175  git add .
+ 2176  git commit -m "hotfix"
+ 2177  cd ../../
+ 2178  git status
+ 2179  git add packages/habitat-sim
+ 2180  git status
+ 2181  git add .gitignore 
+ 2182  git status
+ 2183  git push
+ 2184  git commit -m "installed all packages, ready for dev"
+ 2185  git push
+ 2186  git status
+ 2187  pip install webdataset==0.1.103
+ 2188  pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+ 2189  cd packages/
+ 2190  git clone git@github.com:jacobkrantz/VLN-CE.git
+ 2191  cd VLN-CE
+ 2192  python -m pip install -r requirements.txt
+ 2193  pwd
+ 2194  cd ../../
+ 2195  pip install -e .
+ 2196  pip install -e ".[train]"
+ 2197  pip install -e ".[eval]"
+ 2198  git status
+ 2199  git packages/VLN-CE/ status
+ 2200  cd packages/VLN-CE/ git status
+ 2201  cd packages/VLN-CE/
+ 2202  git status
+ 2203  cd ../../
+ 2204  git status
+ 2205  git add .
+ 2206  git status
+ 2207  git commit -m "added all sub modules vlnce habitat sim habitat lab"
+ 2208  git push
+ 2209  history
+(iros-train) rithvik@vega:~/IROS_proj/NaVILA_iros$ 
