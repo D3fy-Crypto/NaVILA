@@ -25,7 +25,6 @@ import torch
 import transformers
 from torch.utils.data import Dataset
 from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, LlamaForCausalLM, set_seed
-from transformers.modeling_utils import unwrap_model
 
 import llava.data.dataset as dataset
 import llava.data.datasets_mixture as datasets_mixture
@@ -43,6 +42,7 @@ from llava.mm_utils import process_image
 from llava.model import *
 from llava.train.args import DataArguments, ModelArguments, TrainingArguments
 from llava.train.callbacks.autoresume_callback import AutoResumeCallback
+from llava.train.callbacks.gru_monitor_callback import GRUTrainingMonitorCallback
 from llava.train.llava_trainer import LLaVATrainer, VILADPOTrainer
 from llava.train.sequence_parallel import set_pg_manager
 from llava.train.utils import (
@@ -754,8 +754,9 @@ def train():
         training_args=training_args,
     )
 
-    # Add a training step_end callback to check whether to autosuspend.
-    callbacks = [AutoResumeCallback()]
+    # Add callbacks: autoresume + gradient/parameter logging.
+    grad_log_steps = getattr(training_args, "logging_steps", 10) or 10
+    callbacks = [AutoResumeCallback(), GRUTrainingMonitorCallback(log_every_n_steps=grad_log_steps)]
 
     if training_args.dpo:
         ref_model = model_cls(
