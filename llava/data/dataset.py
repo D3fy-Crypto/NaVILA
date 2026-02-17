@@ -2652,8 +2652,8 @@ def make_supervised_data_module(
     training_args.sample_lens = [len(d) for d in train_dataset.datasets]
     # training_args.eval_sample_lens = [len(d) for d in eval_dataset.datasets]
 
-    PROCESS_GROUP_MANAGER = get_pg_manager()
-    if PROCESS_GROUP_MANAGER is None:
+    PROCESS_GROUP_MANAGER = get_pg_manager() #not used
+    if PROCESS_GROUP_MANAGER is None: #not going to do sequence parallelism so no else
         data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer, data_args=data_args)
     else:
         sp_degree = training_args.seq_parallel_size

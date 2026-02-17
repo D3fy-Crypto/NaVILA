@@ -325,7 +325,7 @@ def load_data(data_path):
     return data_list
 
 
-class DPODataset(Dataset):
+class DPODataset(Dataset):         #Not going into this class, since training_args.dpo is False
     """Dataset for supervised fine-tuning."""
 
     def __init__(self, data_mixture: str, tokenizer: transformers.PreTrainedTokenizer, data_args: DataArguments):
@@ -409,10 +409,10 @@ def train():
         training_args.run_name = training_args.output_dir.split("/")[-1]
 
     local_rank = training_args.local_rank
-    compute_dtype = torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32)
+    compute_dtype = torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32) #training_args.fp16 is False, training_args.bf16 is False, so compute_dtype is torch.float32
 
     bnb_model_from_pretrained_args = {}
-    if training_args.bits in [4, 8]:#bits=16, so not going into this block
+    if training_args.bits in [4, 8]: # Bits=16, so not going into this block
         from transformers import BitsAndBytesConfig
 
         bnb_model_from_pretrained_args.update(
@@ -435,9 +435,9 @@ def train():
 
     set_seed(training_args.seed) #seed = 10
 
-    sp_degree = training_args.seq_parallel_size
+    sp_degree = training_args.seq_parallel_size #training_args.seq_parallel_size is -1, so not going into this block
     ring_degree = training_args.seq_parallel_ring_size
-    if sp_degree > 1:
+    if sp_degree > 1: # sp_degree is -1, so not going into this block
         set_pg_manager(sp_degree, ring_degree, ring_type=training_args.seq_parallel_ring_type)
         print(f"Sequence parallelism is enabled, SP = {sp_degree}")
 
@@ -447,7 +447,7 @@ def train():
         print(f"Models has been ready under {training_args.output_dir}. Skipp training")
         exit(0)
 
-    if resume_path:
+    if resume_path: # resume_path is not None, so going into this block, which means resuming from checkpoint
         resume_from_checkpoint = True
         if training_args.lora_enable:
             model_cls = LlavaLlamaModel
@@ -457,6 +457,7 @@ def train():
             config = AutoConfig.from_pretrained(resume_path, trust_remote_code=True)
             config.resume_path = resume_path
             model_cls = eval(config.architectures[0])
+            print("model_cls:", model_cls)          
     else:
         ## first time training
         resume_from_checkpoint = False
@@ -493,7 +494,7 @@ def train():
         **bnb_model_from_pretrained_args,
     )
 
-    if not resume_path or training_args.lora_enable:
+    if not resume_path or training_args.lora_enable:#
         if model_args.mlp_path is not None: #mlp_path is None, so not going into this block
             state_dict = torch.load(model_args.mlp_path, map_location="cpu")
             state_dict_new = {}
@@ -536,11 +537,11 @@ def train():
                 return True
         return False
 
-    if need_to_modify_do_sample(model.llm.generation_config):
+    if need_to_modify_do_sample(model.llm.generation_config): #
         model.llm.generation_config.do_sample = True
 
     ## quantize training @yunhao: be careful here
-    if training_args.bits in [4, 8]:
+    if training_args.bits in [4, 8]:#bits=16, so not going into this block
         from peft import prepare_model_for_kbit_training
 
         model.llm.config.torch_dtype = (
@@ -560,7 +561,7 @@ def train():
 
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
-    if training_args.lora_enable:
+    if training_args.lora_enable: # training_args.lora_enable is False, so not going into this block
         from peft import LoraConfig, PeftModel, get_peft_model
 
         lora_config = LoraConfig(
@@ -602,7 +603,7 @@ def train():
         model.print_trainable_parameters()
 
     # currently assume fft for mm projector
-    if training_args.lora_enable:
+    if training_args.lora_enable #and training_args.lora_vt and model.get_vision_tower() is not None:
         if not training_args.lora_llm:
             model.get_llm().requires_grad_(training_args.tune_language_model)
         if model.get_vision_tower():
@@ -708,7 +709,7 @@ def train():
 
 
     ## TODO pay attention to quantize
-    if training_args.bits in [4, 8]:
+    if training_args.bits in [4, 8]:# bits=16, so not going into this block
         from peft.tuners.lora import LoraLayer
 
         for name, module in model.named_modules():
