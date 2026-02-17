@@ -25,7 +25,7 @@ import torch.distributed as dist
 from transformers import AutoConfig, GenerationConfig, PreTrainedModel
 from transformers.modeling_utils import ContextManagers, no_init_weights
 
-from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX
+from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, MOTION_TOKEN_INDEX
 from llava.mm_utils import process_images
 from llava.model.configuration_llava import LlavaConfig
 from llava.model.language_model.builder import build_llm_and_tokenizer
@@ -206,6 +206,12 @@ class LlavaMetaModel(ABC):
         if type(mm_projector) is list:
             mm_projector = mm_projector[0]
         return mm_projector
+    
+    def get_motion_encoder(self):
+        motion_encoder = getattr(self, "motion_encoder", None)
+        if type(motion_encoder) is list:
+            motion_encoder = motion_encoder[0]
+        return motion_encoder
 
     def post_config(self):
         self.training = self.get_llm().training
@@ -229,6 +235,9 @@ class LlavaMetaModel(ABC):
                 self.get_vision_tower().eval()
             if self.get_mm_projector() and not getattr(self.config, "tune_mm_projector", False):
                 self.get_mm_projector().eval()
+            if self.get_motion_encoder() and not getattr(self.config, "tune_motion_gru", False):
+                # Keep GRU in eval mode (it's pretrained and frozen)
+                self.get_motion_encoder().gru.eval()
 
     def encode_images(self, images):
         image_features = self.get_vision_tower()(images)
@@ -257,7 +266,7 @@ class LlavaMetaForCausalLM(ABC):
 
     ## TODO move the forward function here if there is no need to override it
     def prepare_inputs_labels_for_multimodal(
-        self, input_ids, position_ids, attention_mask, past_key_values, labels, images
+        self, input_ids, position_ids, attention_mask, past_key_values, labels, images, motions=None
     ):
 
         # Handle sequence parallelism

@@ -80,6 +80,15 @@ from llava.utils.tokenizer import preprocess_conversation
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 PIL.Image.MAX_IMAGE_PIXELS = 1000000000
 
+_DATAFLOW_DEBUG_DATASET_PRINTED = False
+_DATAFLOW_DEBUG_COLLATOR_PRINTED = False
+
+
+def _summarize_positions(pos):
+    if len(pos) <= 20:
+        return str(pos)
+    return f"{pos[:10]} ... {pos[-10:]} (count={len(pos)})"
+
 # def preprocess_multimodal is not getting called in the current class used for r2r dataset, which is LazyVLNCEDataset class.
 def preprocess_multimodal(sources: Sequence[str], data_args: DataArguments) -> Dict:
     is_multimodal = data_args.is_multimodal
@@ -2290,6 +2299,65 @@ class LazyVLNCEDataset(Dataset):
                 data_dict["labels"][:] = IGNORE_INDEX
         else:
             data_dict["image"] = None
+
+        global _DATAFLOW_DEBUG_DATASET_PRINTED
+        if not _DATAFLOW_DEBUG_DATASET_PRINTED:
+            worker_info = torch.utils.data.get_worker_info()
+            if worker_info is None or worker_info.id == 0:
+                _DATAFLOW_DEBUG_DATASET_PRINTED = True
+                input_ids = data_dict["input_ids"]
+                labels = data_dict["labels"]
+                images = data_dict.get("image", None)
+
+                if torch.is_tensor(input_ids):
+                    input_len = input_ids.numel()
+                    img_pos = (input_ids == IMAGE_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+                    mot_pos = (input_ids == MOTION_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+                else:
+                    input_len = len(input_ids)
+                    img_pos = [idx for idx, tok in enumerate(input_ids) if tok == IMAGE_TOKEN_INDEX]
+                    mot_pos = [idx for idx, tok in enumerate(input_ids) if tok == MOTION_TOKEN_INDEX]
+
+                if torch.is_tensor(labels):
+                    label_len = labels.numel()
+                    loss_pos = (labels != IGNORE_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+                else:
+                    label_len = len(labels)
+                    loss_pos = [idx for idx, tok in enumerate(labels) if tok != IGNORE_INDEX]
+
+                img_shape = tuple(images.shape) if torch.is_tensor(images) else None
+
+                print("[DATAFLOW][LazyVLNCEDataset] sample keys:", list(data_dict.keys()), flush=True)
+                print(
+                    "[DATAFLOW][LazyVLNCEDataset] input_ids shape/len:",
+                    (tuple(input_ids.shape) if torch.is_tensor(input_ids) else (input_len,)),
+                    "num_tokens:",
+                    input_len,
+                    flush=True,
+                )
+                print(
+                    "[DATAFLOW][LazyVLNCEDataset] labels shape/len:",
+                    (tuple(labels.shape) if torch.is_tensor(labels) else (label_len,)),
+                    "num_tokens:",
+                    label_len,
+                    flush=True,
+                )
+                print("[DATAFLOW][LazyVLNCEDataset] image tensor shape:", img_shape, flush=True)
+                print(
+                    "[DATAFLOW][LazyVLNCEDataset] <image> token positions:",
+                    _summarize_positions(img_pos),
+                    flush=True,
+                )
+                print(
+                    "[DATAFLOW][LazyVLNCEDataset] <motion> token positions:",
+                    _summarize_positions(mot_pos),
+                    flush=True,
+                )
+                print(
+                    "[DATAFLOW][LazyVLNCEDataset] loss(label != IGNORE_INDEX) positions:",
+                    _summarize_positions(loss_pos),
+                    flush=True,
+                )
         return data_dict
 
 
@@ -2371,6 +2439,41 @@ class DataCollatorForSupervisedDataset:
                 crop_size = self.data_args.image_processor.size
             # we still need 1 dummy image for the vision tower
             batch["images"] = torch.zeros(1, 3, crop_size["height"], crop_size["width"])
+
+        global _DATAFLOW_DEBUG_COLLATOR_PRINTED
+        if not _DATAFLOW_DEBUG_COLLATOR_PRINTED and batch["input_ids"].shape[0] == 1:
+            _DATAFLOW_DEBUG_COLLATOR_PRINTED = True
+            ids0 = batch["input_ids"][0]
+            labels0 = batch["labels"][0]
+            img_pos = (ids0 == IMAGE_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            mot_pos = (ids0 == MOTION_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            loss_pos = (labels0 != IGNORE_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            print("[DATAFLOW][DataCollator] batch keys:", list(batch.keys()), flush=True)
+            print(
+                "[DATAFLOW][DataCollator] input_ids shape:",
+                tuple(batch["input_ids"].shape),
+                "labels shape:",
+                tuple(batch["labels"].shape),
+                "attention_mask shape:",
+                tuple(batch["attention_mask"].shape),
+                flush=True,
+            )
+            print("[DATAFLOW][DataCollator] images shape:", tuple(batch["images"].shape), flush=True)
+            print(
+                "[DATAFLOW][DataCollator] <image> token positions (sample 0):",
+                _summarize_positions(img_pos),
+                flush=True,
+            )
+            print(
+                "[DATAFLOW][DataCollator] <motion> token positions (sample 0):",
+                _summarize_positions(mot_pos),
+                flush=True,
+            )
+            print(
+                "[DATAFLOW][DataCollator] loss(label != IGNORE_INDEX) positions (sample 0):",
+                _summarize_positions(loss_pos),
+                flush=True,
+            )
 
         return batch
 

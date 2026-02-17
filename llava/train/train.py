@@ -36,8 +36,9 @@ from llava.constants import (
     DEFAULT_IMAGE_TOKEN,
     IGNORE_INDEX,
     IMAGE_TOKEN_INDEX,
+    MOTION_TOKEN_INDEX,
 )
-from llava.data.dataset_usefull import make_supervised_data_module
+from llava.data.dataset import make_supervised_data_module
 from llava.mm_utils import process_image
 from llava.model import *
 from llava.train.args import DataArguments, ModelArguments, TrainingArguments
@@ -54,6 +55,12 @@ from llava.train.utils import (
 from llava.trl.trainer.utils import DPODataCollatorWithPadding
 
 local_rank = None
+
+
+def _summarize_positions(pos):
+    if len(pos) <= 20:
+        return str(pos)
+    return f"{pos[:10]} ... {pos[-10:]} (count={len(pos)})"
 
 if "WANDB_PROJECT" not in os.environ:
     # Default to WANDB project "VILA".
@@ -772,6 +779,44 @@ def train():
         len(trainer.train_dataset),
         flush=True,
     )
+    if training_args.per_device_train_batch_size == 1 and training_args.local_rank in (-1, 0):
+        debug_batch = next(iter(trainer.get_train_dataloader()))
+        batch_keys = list(debug_batch.keys())
+        print("[DATAFLOW][train.py] sample batch keys:", batch_keys, flush=True)
+        if "input_ids" in debug_batch:
+            print(
+                "[DATAFLOW][train.py] input_ids shape:",
+                tuple(debug_batch["input_ids"].shape),
+                "labels shape:",
+                tuple(debug_batch["labels"].shape),
+                "attention_mask shape:",
+                tuple(debug_batch["attention_mask"].shape),
+                flush=True,
+            )
+            ids0 = debug_batch["input_ids"][0]
+            labels0 = debug_batch["labels"][0]
+            img_pos = (ids0 == IMAGE_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            mot_pos = (ids0 == MOTION_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            loss_pos = (labels0 != IGNORE_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+            print(
+                "[DATAFLOW][train.py] <image> token positions (sample 0):",
+                _summarize_positions(img_pos),
+                flush=True,
+            )
+            print(
+                "[DATAFLOW][train.py] <motion> token positions (sample 0):",
+                _summarize_positions(mot_pos),
+                flush=True,
+            )
+            print(
+                "[DATAFLOW][train.py] loss(label != IGNORE_INDEX) positions (sample 0):",
+                _summarize_positions(loss_pos),
+                flush=True,
+            )
+        if "images" in debug_batch:
+            print("[DATAFLOW][train.py] images shape:", tuple(debug_batch["images"].shape), flush=True)
+        if "motions" in debug_batch:
+            print("[DATAFLOW][train.py] motions shape:", tuple(debug_batch["motions"].shape), flush=True)
     print(
         "[GPU memory] before trainer",
         torch.cuda.memory_allocated() / 1024 / 1024 / 1024,
