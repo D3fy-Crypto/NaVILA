@@ -21,7 +21,7 @@ import transformers
 
 from llava import conversation as conversation_lib
 from llava.constants import IGNORE_INDEX, SENTINEL_TOKEN
-from llava.mm_utils import tokenizer_image_token
+from llava.mm_utils import tokenizer_image_token, tokenizer_mm_token
 from llava.utils.logging import logger
 
 __all__ = [
@@ -121,7 +121,7 @@ def tokenize_conversation(
         add_generation_prompt=add_generation_prompt,
         tokenize=False,
     )
-    return tokenizer_image_token(text, tokenizer, return_tensors="pt")
+    return tokenizer_mm_token(text, tokenizer, return_tensors="pt")
 
 
 def _maybe_add_sentinel_token(tokenizer: transformers.PreTrainedTokenizer) -> None:

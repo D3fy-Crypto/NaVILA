@@ -73,7 +73,7 @@ def build_dataset_legacy(
 ) -> Dataset:
     from llava.data.dataset import DummyDataset, LazyEnvDropDataset, LazySupervisedDataset, LazyVLNCEDataset
 
-    dataset = DATASETS_LEGACY[name]
+    dataset = DATASETS_LEGACY[name] #name = 'r2r'
     dataset_type = dataset.dataset_type
     if dataset_type == "torch":
         dataset_cls = LazySupervisedDataset
@@ -82,7 +82,7 @@ def build_dataset_legacy(
     elif dataset_type == "vlnce":
         dataset_cls = LazyVLNCEDataset
     else:
-        raise NotImplementedError(f"{dataset_type} is not supported.")
+        raise NotImplementedError(f"{dataset_type} is not supported.") #dataset_type = 'vlnce'
 
     data_args.meta_path = getattr(dataset, "meta_path", None)
     data_args.caption_choice = getattr(dataset, "caption_choice", None)

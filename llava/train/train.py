@@ -37,7 +37,7 @@ from llava.constants import (
     IGNORE_INDEX,
     IMAGE_TOKEN_INDEX,
 )
-from llava.data import make_supervised_data_module
+from llava.data.dataset_usefull import make_supervised_data_module
 from llava.mm_utils import process_image
 from llava.model import *
 from llava.train.args import DataArguments, ModelArguments, TrainingArguments
@@ -400,9 +400,9 @@ def train():
 
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    print("model_args:", model_args)
-    print("data_args:", data_args)
-    print("training_args:", training_args)
+    print("model_args:", model_args) # ModelArguments(version='llama_3', chat_template=None, model_name_or_path='a8cheng/navila-siglip-llama3-8b-v1.5-pretrain', vision_tower='google/siglip-so400m-patch14-384', mm_projector='mlp_downsample', mm_use_im_start_end=False, mm_use_im_patch_token=False, mm_vision_select_layer=-2, mm_vision_select_feature='cls_patch', vision_resolution=-1, interpolate_mode='linear', drop_path_rate=0.0, mlp_path=None, s2=False, s2_scales='336,672,1008', s2_max_split_size=336, num_time_tokens=0, time_token_format='<t{t}>', soft_ce_std=1.0)
+    print("data_args:", data_args) # DataArguments(data_path=None, lazy_preprocess=True, is_multimodal=False, image_folder=None, image_aspect_ratio='resize', data_mixture='r2r', eval_data_mixture=None, vflan_no_system_prompt=False, downsample_video=False, navila_video_sampler=False, navila_video_sampler_v2=False, num_video_frames=8, fps=0.0)
+    print("training_args:", training_args) # 
     
     # FIXME(zhijianl): This should be deprecated when we move to the new scripts.
     if os.getenv("RUN_NAME") is None:
@@ -494,7 +494,7 @@ def train():
         **bnb_model_from_pretrained_args,
     )
 
-    if not resume_path or training_args.lora_enable:#
+    if not resume_path or training_args.lora_enable: # if not resume_path, which means not resuming from checkpoint, so going into this block; or if training_args.
         if model_args.mlp_path is not None: #mlp_path is None, so not going into this block
             state_dict = torch.load(model_args.mlp_path, map_location="cpu")
             state_dict_new = {}
@@ -603,7 +603,7 @@ def train():
         model.print_trainable_parameters()
 
     # currently assume fft for mm projector
-    if training_args.lora_enable #and training_args.lora_vt and model.get_vision_tower() is not None:
+    if training_args.lora_enable: #and training_args.lora_vt and model.get_vision_tower() is not None:
         if not training_args.lora_llm:
             model.get_llm().requires_grad_(training_args.tune_language_model)
         if model.get_vision_tower():
@@ -647,9 +647,9 @@ def train():
     elif model_args.version == "v0.5":
         tokenizer.pad_token = tokenizer.unk_token
     else:
-        print("Before setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
+        #print("Before setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
         tokenizer.pad_token = tokenizer.unk_token
-        print("After setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
+        #print("After setting pad_token, tokenizer.pad_token:", tokenizer.pad_token)
         if tokenizer.pad_token is None:
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="[PAD]"),
@@ -657,10 +657,10 @@ def train():
                 model=model.llm,
             )
         print("model_args.version:", model_args.version)
-        print("conversation_lib.conv_templates:", conversation_lib.conv_templates)
+        #print("conversation_lib.conv_templates:", conversation_lib.conv_templates)
         if model_args.version in conversation_lib.conv_templates:
             conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
-            print("default_conversation:", conversation_lib.default_conversation)
+            #print("default_conversation:", conversation_lib.default_conversation)
             
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
