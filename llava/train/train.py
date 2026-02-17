@@ -407,9 +407,9 @@ def train():
 
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    print("model_args:", model_args) # ModelArguments(version='llama_3', chat_template=None, model_name_or_path='a8cheng/navila-siglip-llama3-8b-v1.5-pretrain', vision_tower='google/siglip-so400m-patch14-384', mm_projector='mlp_downsample', mm_use_im_start_end=False, mm_use_im_patch_token=False, mm_vision_select_layer=-2, mm_vision_select_feature='cls_patch', vision_resolution=-1, interpolate_mode='linear', drop_path_rate=0.0, mlp_path=None, s2=False, s2_scales='336,672,1008', s2_max_split_size=336, num_time_tokens=0, time_token_format='<t{t}>', soft_ce_std=1.0)
-    print("data_args:", data_args) # DataArguments(data_path=None, lazy_preprocess=True, is_multimodal=False, image_folder=None, image_aspect_ratio='resize', data_mixture='r2r', eval_data_mixture=None, vflan_no_system_prompt=False, downsample_video=False, navila_video_sampler=False, navila_video_sampler_v2=False, num_video_frames=8, fps=0.0)
-    print("training_args:", training_args) # 
+    #print("model_args:", model_args) # ModelArguments(version='llama_3', chat_template=None, model_name_or_path='a8cheng/navila-siglip-llama3-8b-v1.5-pretrain', vision_tower='google/siglip-so400m-patch14-384', mm_projector='mlp_downsample', mm_use_im_start_end=False, mm_use_im_patch_token=False, mm_vision_select_layer=-2, mm_vision_select_feature='cls_patch', vision_resolution=-1, interpolate_mode='linear', drop_path_rate=0.0, mlp_path=None, s2=False, s2_scales='336,672,1008', s2_max_split_size=336, num_time_tokens=0, time_token_format='<t{t}>', soft_ce_std=1.0)
+    #print("data_args:", data_args) # DataArguments(data_path=None, lazy_preprocess=True, is_multimodal=False, image_folder=None, image_aspect_ratio='resize', data_mixture='r2r', eval_data_mixture=None, vflan_no_system_prompt=False, downsample_video=False, navila_video_sampler=False, navila_video_sampler_v2=False, num_video_frames=8, fps=0.0)
+    #print("training_args:", training_args) # 
     
     # FIXME(zhijianl): This should be deprecated when we move to the new scripts.
     if os.getenv("RUN_NAME") is None:
@@ -464,7 +464,7 @@ def train():
             config = AutoConfig.from_pretrained(resume_path, trust_remote_code=True)
             config.resume_path = resume_path
             model_cls = eval(config.architectures[0])
-            print("model_cls:", model_cls)          
+            #print("model_cls:", model_cls)          
     else:
         ## first time training
         resume_from_checkpoint = False

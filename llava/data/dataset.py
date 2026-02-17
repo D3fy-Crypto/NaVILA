@@ -34,6 +34,7 @@ import base64
 import copy
 import io
 import json
+import math
 import os
 import os.path as osp
 import pickle
@@ -65,7 +66,7 @@ from llava.constants import (
     DEFAULT_MOTION_TOKEN
 )
 from llava.eval.mmmu_utils.data_utils import CAT_SHORT2LONG, construct_prompt, load_yaml, process_single_sample
-from llava.mm_utils import opencv_extract_frames, process_image, tokenizer_image_token
+from llava.mm_utils import opencv_extract_frames, process_image, tokenizer_image_token, tokenizer_mm_token
 from llava.model import *
 from llava.train.args import DataArguments, TrainingArguments
 from llava.train.sequence_parallel import (
@@ -82,12 +83,89 @@ PIL.Image.MAX_IMAGE_PIXELS = 1000000000
 
 _DATAFLOW_DEBUG_DATASET_PRINTED = False
 _DATAFLOW_DEBUG_COLLATOR_PRINTED = False
+_POSE_DELTAS_CACHE: Dict[str, Dict[int, List[List[float]]]] = {}
 
 
 def _summarize_positions(pos):
     if len(pos) <= 20:
         return str(pos)
     return f"{pos[:10]} ... {pos[-10:]} (count={len(pos)})"
+
+
+def _normalize_delta(dx, dy, dyaw, trans_norm=0.25):
+    # [dx/0.25, dy/0.25, sin(dyaw), cos(dyaw)]
+    return [
+        float(dx) / trans_norm,
+        float(dy) / trans_norm,
+        math.sin(float(dyaw)),
+        math.cos(float(dyaw)),
+    ]
+
+
+def _make_motion_windows(pose_deltas_step, num_frames, window_size=10, trans_norm=0.25):
+    """
+    pose_deltas_step: list length (num_frames-1), each (dx,dy,dyaw) for transition (t-1)->t
+    returns motion tensor [num_frames, window_size, 4] where token t contains history up to frame t.
+    """
+    W = window_size
+    out = torch.zeros(num_frames, W, 4, dtype=torch.float32)
+    for t in range(1, num_frames):
+        start = max(0, t - W)
+        chunk = pose_deltas_step[start:t]
+        pad = W - len(chunk)
+        for j, (dx, dy, dyaw) in enumerate(chunk):
+            out[t, pad + j] = torch.tensor(_normalize_delta(dx, dy, dyaw, trans_norm), dtype=torch.float32)
+    return out
+
+
+def _vlnce_sample_indices(total_frames: int, num_frames: int) -> List[int]:
+    if total_frames <= 0:
+        return [0] * num_frames
+    padded = max(0, num_frames - total_frames)
+    effective_len = total_frames + padded
+    sampled = np.linspace(0, effective_len - 1, num=num_frames - 1, endpoint=False, dtype=int).tolist()
+    sampled.append(effective_len - 1)
+    return [max(0, idx - padded) for idx in sampled]
+
+
+def _load_pose_deltas_dir(pose_deltas_dir: Optional[str]) -> Dict[int, List[List[float]]]:
+    if not pose_deltas_dir:
+        return {}
+    if pose_deltas_dir in _POSE_DELTAS_CACHE:
+        return _POSE_DELTAS_CACHE[pose_deltas_dir]
+    if not os.path.isdir(pose_deltas_dir):
+        print(f"[PoseDeltas] directory not found: {pose_deltas_dir}")
+        _POSE_DELTAS_CACHE[pose_deltas_dir] = {}
+        return {}
+    cache: Dict[int, List[List[float]]] = {}
+    filenames = [
+        "oracle_deltas_train.jsonl",
+        "oracle_deltas_val_seen.jsonl",
+        "oracle_deltas_val_unseen.jsonl",
+    ]
+    loaded = 0
+    for fname in filenames:
+        fpath = os.path.join(pose_deltas_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+        with open(fpath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                episode_id = obj.get("episode_id", None)
+                deltas = obj.get("deltas", None)
+                if episode_id is None or deltas is None:
+                    continue
+                cache[int(episode_id)] = deltas
+                loaded += 1
+    print(f"[PoseDeltas] loaded {loaded} episodes from {pose_deltas_dir}")
+    _POSE_DELTAS_CACHE[pose_deltas_dir] = cache
+    return cache
 
 # def preprocess_multimodal is not getting called in the current class used for r2r dataset, which is LazyVLNCEDataset class.
 def preprocess_multimodal(sources: Sequence[str], data_args: DataArguments) -> Dict:
@@ -132,14 +210,16 @@ def preprocess_plain(
     for source in sources:
         assert len(source) == 2
         assert DEFAULT_IMAGE_TOKEN in source[0]["value"]
-        source[0]["value"] = DEFAULT_IMAGE_TOKEN
+        # Preserve motion tokens if present; otherwise keep legacy behavior.
+        if DEFAULT_MOTION_TOKEN not in source[0]["value"]:
+            source[0]["value"] = DEFAULT_IMAGE_TOKEN
         conversation = source[0]["value"] + source[1]["value"] + conversation_lib.default_conversation.sep
         conversations.append(conversation)
     # tokenize conversations
-    input_ids = [tokenizer_image_token(prompt, tokenizer, return_tensors="pt") for prompt in conversations]
+    input_ids = [tokenizer_mm_token(prompt, tokenizer, return_tensors="pt") for prompt in conversations]
     targets = copy.deepcopy(input_ids)
     for target, source in zip(targets, sources):
-        tokenized_len = len(tokenizer_image_token(source[0]["value"], tokenizer))
+        tokenized_len = len(tokenizer_mm_token(source[0]["value"], tokenizer))
         target[:tokenized_len] = IGNORE_INDEX
 
     return dict(input_ids=input_ids, labels=targets)
@@ -302,6 +382,10 @@ class LazySupervisedDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
+        pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
+        self.delta_cache = _load_pose_deltas_dir(pose_deltas_dir)
+        if pose_deltas_dir and len(self.delta_cache) == 0:
+            raise ValueError(f"Pose deltas not found or empty: {pose_deltas_dir}")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -2062,6 +2146,10 @@ class LazyEnvDropDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
+        pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
+        self.delta_cache = _load_pose_deltas_dir(pose_deltas_dir)
+        if pose_deltas_dir and len(self.delta_cache) == 0:
+            raise ValueError(f"Pose deltas not found or empty: {pose_deltas_dir}")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -2250,6 +2338,7 @@ class LazyVLNCEDataset(Dataset):
             frames = sources[0]["frames"]
             video_folder = self.image_folder
             video_paths = [os.path.join(video_folder, frame) for frame in frames]
+            indices_to_sample = _vlnce_sample_indices(len(frames), num_video_frames)
 
             images, video_loading_succeed = self._load_video(video_paths, num_video_frames, self.data_args)
             num_frames_loaded_successfully = len(images)
@@ -2260,13 +2349,62 @@ class LazyVLNCEDataset(Dataset):
             instruction = re.sub(r"(?<=\.\s)([a-z])", lambda x: x.group().upper(), instruction.capitalize())
             instruction = re.sub(r"\s+\.", ".", instruction)
             answer = sources[0]["a"]
+            # Build per-transition deltas aligned to sampled frames
+            if not hasattr(self, "delta_cache"):
+                pose_deltas_dir = getattr(self.data_args, "pose_deltas_dir", None)
+                self.delta_cache = _load_pose_deltas_dir(pose_deltas_dir)
+            episode_id = None
+            all_deltas = None
+            try:
+                episode_id = int(sources[0]["video_id"].split("-")[0])  # "914-23" -> 914
+                all_deltas = self.delta_cache.get(episode_id)
+            except Exception:
+                all_deltas = None
 
-            image_tokens = "<image>\n" * (num_frames_loaded_successfully - 1)
+            if all_deltas is None:
+                raise ValueError(
+                    f"Pose deltas missing for episode_id={episode_id}. "
+                    f"Check pose_deltas_dir={getattr(self.data_args, 'pose_deltas_dir', None)}"
+                )
+
+            T = num_frames_loaded_successfully
+            pose_deltas_step = []
+            if video_loading_succeed:
+                for j in range(1, len(indices_to_sample)):
+                    prev_idx = indices_to_sample[j - 1]
+                    curr_idx = indices_to_sample[j]
+                    dx = dy = dyaw = 0.0
+                    max_k = min(curr_idx, len(all_deltas))
+                    for k in range(prev_idx, max_k):
+                        d = all_deltas[k]
+                        dx += float(d[0])
+                        dy += float(d[1])
+                        dyaw += float(d[2])
+                    pose_deltas_step.append((dx, dy, dyaw))
+                if len(pose_deltas_step) != T - 1:
+                    pose_deltas_step = pose_deltas_step[: T - 1] + [(0.0, 0.0, 0.0)] * max(
+                        0, (T - 1) - len(pose_deltas_step)
+                    )
+            else:
+                pose_deltas_step = [(0.0, 0.0, 0.0)] * max(0, T - 1)
+
+            motion_tensor = _make_motion_windows(
+                pose_deltas_step=pose_deltas_step,
+                num_frames=T,
+                window_size=getattr(self.data_args, "motion_window_size", 10),
+                trans_norm=getattr(self.data_args, "motion_trans_norm", 0.25),
+            )
+
+            hist_pairs = (DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n") * max(0, T - 1)
+            cur_pair = DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n"
             question = (
-                f"Imagine you are a robot programmed for navigation tasks. You have been given a video "
-                f'of historical observations {image_tokens}, and current observation <image>\n. Your assigned task is: "{instruction}" '
-                f"Analyze this series of images to decide your next action, which could be turning left or right by a specific "
-                f"degree, moving forward a certain distance, or stop if the task is completed."
+                "Imagine you are a robot programmed for navigation tasks. "
+                f"You have been given a video of historical observations {hist_pairs}, "
+                f"and current observation {cur_pair}. "
+                f'Your assigned task is: "{instruction}" '
+                "Analyze this series of observations to decide your next action, which could be "
+                "turning left or right by a specific degree, moving forward a certain distance, "
+                "or stop if the task is completed."
             )
 
             if not video_loading_succeed:
@@ -2295,10 +2433,22 @@ class LazyVLNCEDataset(Dataset):
 
         if ("video" in self.list_data_dict[i]) or ("video_id" in self.list_data_dict[i]):
             data_dict["image"] = image_tensor
+            data_dict["motion"] = motion_tensor
+            data_dict["pose_deltas"] = torch.tensor(pose_deltas_step, dtype=torch.float32)
             if not video_loading_succeed:
                 data_dict["labels"][:] = IGNORE_INDEX
         else:
             data_dict["image"] = None
+            data_dict["motion"] = None
+
+        # Hard stop if motion tokens are missing.
+        input_ids = data_dict["input_ids"]
+        if torch.is_tensor(input_ids):
+            mot_pos = (input_ids == MOTION_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+        else:
+            mot_pos = [idx for idx, tok in enumerate(input_ids) if tok == MOTION_TOKEN_INDEX]
+        if len(mot_pos) == 0:
+            raise ValueError("No <motion> tokens found in input_ids; aborting training.")
 
         global _DATAFLOW_DEBUG_DATASET_PRINTED
         if not _DATAFLOW_DEBUG_DATASET_PRINTED:
@@ -2308,6 +2458,7 @@ class LazyVLNCEDataset(Dataset):
                 input_ids = data_dict["input_ids"]
                 labels = data_dict["labels"]
                 images = data_dict.get("image", None)
+                motions = data_dict.get("motion", None)
 
                 if torch.is_tensor(input_ids):
                     input_len = input_ids.numel()
@@ -2326,6 +2477,7 @@ class LazyVLNCEDataset(Dataset):
                     loss_pos = [idx for idx, tok in enumerate(labels) if tok != IGNORE_INDEX]
 
                 img_shape = tuple(images.shape) if torch.is_tensor(images) else None
+                mot_shape = tuple(motions.shape) if torch.is_tensor(motions) else None
 
                 print("[DATAFLOW][LazyVLNCEDataset] sample keys:", list(data_dict.keys()), flush=True)
                 print(
@@ -2343,6 +2495,7 @@ class LazyVLNCEDataset(Dataset):
                     flush=True,
                 )
                 print("[DATAFLOW][LazyVLNCEDataset] image tensor shape:", img_shape, flush=True)
+                print("[DATAFLOW][LazyVLNCEDataset] motion tensor shape:", mot_shape, flush=True)
                 print(
                     "[DATAFLOW][LazyVLNCEDataset] <image> token positions:",
                     _summarize_positions(img_pos),
@@ -2373,7 +2526,7 @@ class DataCollatorForSupervisedDataset:
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         # input_ids, labels = tuple([instance[key] for instance in instances]
         #                           for key in ("input_ids", "labels"))
-        input_ids, labels, images = [], [], []
+        input_ids, labels, images, motions = [], [], [], []
         for instance in instances:
             if not isinstance(instance["input_ids"], list):
                 input_ids.append(instance["input_ids"])
@@ -2397,15 +2550,29 @@ class DataCollatorForSupervisedDataset:
                     images.extend(cur_image.chunk(cur_image.size(0), 0))
             else:
                 images.append([])
+            if instance.get("motion") is not None:
+                cur_motion = instance["motion"]
+                assert cur_motion.ndim == 3, f"Expected motion tensor [T,W,4], got {cur_motion.shape}"
+                if not isinstance(instance["input_ids"], list):
+                    motions.append(cur_motion)
+                else:
+                    motions.extend(cur_motion.chunk(cur_motion.size(0), dim=0))
+            else:
+                motions.append([])
         # kentang-mit@: we need to make sure these two lists have
         # the same length. We will use input_ids to filter out images corresponding
         # to truncated <image> tokens later.
-        for _images, _input_ids in zip(images, input_ids):
+        for _images, _motions, _input_ids in zip(images, motions, input_ids):
             assert (
                 len(_images) == (_input_ids == IMAGE_TOKEN_INDEX).sum().item()
             ), f"Number mismatch between images and placeholder image tokens in 'len(_images) == (_input_ids == IMAGE_TOKEN_INDEX).sum().item()'.\
                 Expect to have {len(_images)} images but only found {(_input_ids == IMAGE_TOKEN_INDEX).sum().item()} images in tokens. \
                 Error input_ids: {_input_ids} {self.tokenizer.decode([x if x != -200 else 200 for x in _input_ids])}"
+            assert len(_motions) == (_input_ids == MOTION_TOKEN_INDEX).sum().item(), (
+                "Mismatch motion tensors vs <motion> placeholders.\n"
+                f"len(motions)={len(_motions)} but #<motion>={(_input_ids == MOTION_TOKEN_INDEX).sum().item()}\n"
+                f"decoded={self.tokenizer.decode([x if x >= 0 else 200 for x in _input_ids])}"
+            )
 
         input_ids = torch.nn.utils.rnn.pad_sequence(
             input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
@@ -2420,15 +2587,20 @@ class DataCollatorForSupervisedDataset:
         )
 
         new_images = []
+        new_motions = []
         # kentang-mit@: it is possible that some <image> tokens get removed
         # after truncation. It is important to also remove corresponding images.
         # otherwise, text and image will mismatch in the model.
         for ix in range(len(input_ids)):
             num_images = (input_ids[ix] == IMAGE_TOKEN_INDEX).sum().item()
+            num_motions = (input_ids[ix] == MOTION_TOKEN_INDEX).sum().item()
             cur_images = images[ix]
             cur_images = cur_images[:num_images]
+            cur_motions = motions[ix][:num_motions] if len(motions[ix]) > 0 else []
             if len(cur_images) > 0:
                 new_images.append(cur_images)
+            if len(cur_motions) > 0:
+                new_motions.append(cur_motions)
         if len(new_images) > 0:
             batch["images"] = torch.cat(new_images, dim=0)
         else:
@@ -2439,6 +2611,11 @@ class DataCollatorForSupervisedDataset:
                 crop_size = self.data_args.image_processor.size
             # we still need 1 dummy image for the vision tower
             batch["images"] = torch.zeros(1, 3, crop_size["height"], crop_size["width"])
+        if len(new_motions) > 0:
+            batch["motions"] = torch.cat(new_motions, dim=0)
+        else:
+            W = getattr(self.data_args, "motion_window_size", 10)
+            batch["motions"] = torch.zeros(1, W, 4, dtype=torch.float32)
 
         global _DATAFLOW_DEBUG_COLLATOR_PRINTED
         if not _DATAFLOW_DEBUG_COLLATOR_PRINTED and batch["input_ids"].shape[0] == 1:
@@ -2459,6 +2636,7 @@ class DataCollatorForSupervisedDataset:
                 flush=True,
             )
             print("[DATAFLOW][DataCollator] images shape:", tuple(batch["images"].shape), flush=True)
+            print("[DATAFLOW][DataCollator] motions shape:", tuple(batch["motions"].shape), flush=True)
             print(
                 "[DATAFLOW][DataCollator] <image> token positions (sample 0):",
                 _summarize_positions(img_pos),

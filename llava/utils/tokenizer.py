@@ -35,7 +35,7 @@ DUMMY_CONVERSATION = [
     {"from": "gpt", "value": "answer"},
 ] * 10
 
-
+#this is the one thats getting used
 def tokenize_conversation_legacy(
     messages: Sequence[Dict[str, str]],
     tokenizer: transformers.PreTrainedTokenizer,
@@ -66,7 +66,7 @@ def tokenize_conversation_legacy(
         else:
             conv.append_message(role, message["value"])
 
-    return tokenizer_image_token(conv.get_prompt(), tokenizer, return_tensors="pt")
+    return tokenizer_mm_token(conv.get_prompt(), tokenizer, return_tensors="pt")
 
 
 def _normalize(text: str) -> str:
@@ -77,7 +77,7 @@ def _normalize(text: str) -> str:
         text = normalized
     return text
 
-
+#this is the one thats not getting used
 def tokenize_conversation(
     messages: Sequence[Dict[str, str]],
     tokenizer: transformers.PreTrainedTokenizer,

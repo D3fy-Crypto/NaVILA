@@ -169,6 +169,8 @@ def calculate_loss_weight(labels, ignore_index=-100):
     padding_mask = shift_labels.eq(ignore_index)  # IGNORE_INDEX = -100 by default
     num_active_elements = padding_mask.numel() - padding_mask.long().sum()
     global_active_sum = copy.deepcopy(num_active_elements)
+    if not dist.is_available() or not dist.is_initialized():
+        return torch.tensor(1.0, device=labels.device)
     dist.all_reduce(global_active_sum)
     loss_weight = num_active_elements / global_active_sum * dist.get_world_size()
     # print("num_active_elements", num_active_elements.item(), "padding_mask.numel()", padding_mask.numel(), "padding_mask.long().sum()", padding_mask.long().sum().item())

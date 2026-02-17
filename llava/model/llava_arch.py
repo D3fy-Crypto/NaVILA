@@ -341,7 +341,7 @@ class LlavaMetaForCausalLM(ABC):
         motion_encoder = self.get_motion_encoder()
         use_images = vision_tower is not None and images is not None
         use_motions = motion_encoder is not None and motions is not None
-
+        # print("use_motions:", use_motions)
         if (not use_images and not use_motions) or (input_ids.shape[1] == 1 and PROCESS_GROUP_MANAGER is None):
             if (
                 past_key_values is not None

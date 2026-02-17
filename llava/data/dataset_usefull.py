@@ -34,6 +34,7 @@ import base64
 import copy
 import io
 import json
+import math
 import os
 import os.path as osp
 import pickle
@@ -76,6 +77,7 @@ PIL.Image.MAX_IMAGE_PIXELS = 1000000000
 
 _DATAFLOW_DEBUG_DATASET_PRINTED = False
 _DATAFLOW_DEBUG_COLLATOR_PRINTED = False
+_POSE_DELTAS_CACHE: Dict[str, Dict[int, List[List[float]]]] = {}
 
 
 def _summarize_positions(pos):
@@ -97,6 +99,46 @@ def _normalize_delta(dx, dy, dyaw, trans_norm=0.25):
         math.sin(float(dyaw)),
         math.cos(float(dyaw)),
     ]
+
+
+def _load_pose_deltas_dir(pose_deltas_dir: Optional[str]) -> Dict[int, List[List[float]]]:
+    if not pose_deltas_dir:
+        return {}
+    if pose_deltas_dir in _POSE_DELTAS_CACHE:
+        return _POSE_DELTAS_CACHE[pose_deltas_dir]
+    if not os.path.isdir(pose_deltas_dir):
+        print(f"[PoseDeltas] directory not found: {pose_deltas_dir}")
+        _POSE_DELTAS_CACHE[pose_deltas_dir] = {}
+        return {}
+    cache: Dict[int, List[List[float]]] = {}
+    filenames = [
+        "oracle_deltas_train.jsonl",
+        # "oracle_deltas_val_seen.jsonl",
+        # "oracle_deltas_val_unseen.jsonl",
+    ]
+    loaded = 0
+    for fname in filenames:
+        fpath = os.path.join(pose_deltas_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+        with open(fpath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                episode_id = obj.get("episode_id", None)
+                deltas = obj.get("deltas", None)
+                if episode_id is None or deltas is None:
+                    continue
+                cache[int(episode_id)] = deltas
+                loaded += 1
+    print(f"[PoseDeltas] loaded {loaded} episodes from {pose_deltas_dir}")
+    _POSE_DELTAS_CACHE[pose_deltas_dir] = cache
+    return cache
 
 def _make_motion_windows(pose_deltas_step, num_frames, window_size=10, trans_norm=0.25):
     """
@@ -134,7 +176,9 @@ def preprocess_plain(
     for source in sources:
         assert len(source) == 2
         assert DEFAULT_IMAGE_TOKEN in source[0]["value"]
-        source[0]["value"] = DEFAULT_IMAGE_TOKEN
+        # Preserve motion tokens if present; otherwise keep legacy behavior.
+        if DEFAULT_MOTION_TOKEN not in source[0]["value"]:
+            source[0]["value"] = DEFAULT_IMAGE_TOKEN
         conversation = source[0]["value"] + source[1]["value"] + conversation_lib.default_conversation.sep
         conversations.append(conversation)
     # tokenize conversations
@@ -187,6 +231,10 @@ class LazyVLNCEDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
+        pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
+        self.delta_cache = _load_pose_deltas_dir(pose_deltas_dir)
+        if pose_deltas_dir and len(self.delta_cache) == 0:
+            raise ValueError(f"Pose deltas not found or empty: {pose_deltas_dir}")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -290,7 +338,12 @@ class LazyVLNCEDataset(Dataset):
             all_deltas = None
 
         pose_deltas_step = []  # length (T-1): delta from sampled frame (t-1) -> sampled frame t
-        if all_deltas is not None and video_loading_succeed:
+        if all_deltas is None:
+            raise ValueError(
+                f"Pose deltas missing for episode_id={episode_id}. "
+                f"Check pose_deltas_dir={getattr(self.data_args, 'pose_deltas_dir', None)}"
+            )
+        if video_loading_succeed:
             for j in range(1, len(indices_to_sample)):
                 prev_idx = indices_to_sample[j - 1]
                 curr_idx = indices_to_sample[j]
@@ -379,6 +432,15 @@ class LazyVLNCEDataset(Dataset):
 
         if not video_loading_succeed:
             data_dict["labels"][:] = IGNORE_INDEX
+
+        # Hard stop if motion tokens are missing.
+        input_ids = data_dict["input_ids"]
+        if torch.is_tensor(input_ids):
+            mot_pos = (input_ids == MOTION_TOKEN_INDEX).nonzero(as_tuple=False).squeeze(-1).tolist()
+        else:
+            mot_pos = [idx for idx, tok in enumerate(input_ids) if tok == MOTION_TOKEN_INDEX]
+        if len(mot_pos) == 0:
+            raise ValueError("No <motion> tokens found in input_ids; aborting training.")
 
         global _DATAFLOW_DEBUG_DATASET_PRINTED
         if not _DATAFLOW_DEBUG_DATASET_PRINTED:

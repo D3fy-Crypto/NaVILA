@@ -33,6 +33,12 @@ class DataArguments:
     downsample_video: bool = False
     navila_video_sampler: bool = False
     navila_video_sampler_v2: bool = False
+    pose_deltas_dir: Optional[str] = field(
+        default="/home/rithvik/IROS_proj/NaVILA-Dataset/R2R/pose_deltas",
+        metadata={"help": "Directory containing oracle_deltas_*.jsonl files."},
+    )
+    motion_window_size: int = 10
+    motion_trans_norm: float = 0.25
 
     # for video training
     num_video_frames: int = 8
