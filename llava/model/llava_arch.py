@@ -31,6 +31,8 @@ from llava.model.configuration_llava import LlavaConfig
 from llava.model.language_model.builder import build_llm_and_tokenizer
 from llava.model.multimodal_encoder.builder import build_vision_tower
 from llava.model.multimodal_projector.builder import build_mm_projector
+from llava.model.motion_model_encoder.builder import build_motion_encoder
+from llava.model.motion_model_projector.builder import build_motion_projector
 from llava.model.utils import get_model_config
 from llava.train.sequence_parallel import get_pg_manager
 from llava.utils.media import extract_media
@@ -68,6 +70,13 @@ class LlavaMetaModel(ABC):
         self.llm, self.tokenizer = build_llm_and_tokenizer(llm_cfg, config, *args, **kwargs)
         self.vision_tower = build_vision_tower(vision_tower_cfg, config)
         self.mm_projector = build_mm_projector(mm_projector_cfg, config)
+        motion_encoder_cfg = getattr(config, "motion_encoder_cfg", None)
+        motion_projector_cfg = getattr(config, "motion_projector_cfg", None)
+        if motion_encoder_cfg is not None and motion_projector_cfg is None:
+            motion_projector_cfg = "grid2vision"
+            config.motion_projector_cfg = motion_projector_cfg
+        self.motion_encoder = build_motion_encoder(motion_encoder_cfg, config)
+        self.motion_projector = build_motion_projector(motion_projector_cfg, config)
 
         self.post_config()
         self.is_loaded = True
@@ -126,6 +135,13 @@ class LlavaMetaModel(ABC):
         vlm.llm, vlm.tokenizer = build_llm_and_tokenizer(llm_cfg, config, *args, **kwargs)
         vlm.vision_tower = build_vision_tower(vision_tower_cfg, config)
         vlm.mm_projector = build_mm_projector(mm_projector_cfg, config)
+        motion_encoder_cfg = getattr(config, "motion_encoder_cfg", None)
+        motion_projector_cfg = getattr(config, "motion_projector_cfg", None)
+        if motion_encoder_cfg is not None and motion_projector_cfg is None:
+            motion_projector_cfg = "grid2vision"
+            config.motion_projector_cfg = motion_projector_cfg
+        vlm.motion_encoder = build_motion_encoder(motion_encoder_cfg, config)
+        vlm.motion_projector = build_motion_projector(motion_projector_cfg, config)
 
         self.post_config()
         self.is_loaded = True
@@ -180,6 +196,22 @@ class LlavaMetaModel(ABC):
                 state_dict=mm_projector_state_dict,
             )
             self.config.mm_projector_cfg = self.mm_projector.config
+        if self.get_motion_encoder():
+            motion_encoder_dir = osp.join(output_dir, "motion_encoder")
+            os.makedirs(motion_encoder_dir, exist_ok=True)
+            motion_state_dict = OrderedDict(
+                {k.split("motion_encoder.")[-1]: v for k, v in state_dict.items() if "motion_encoder" in k}
+            )
+            torch.save({"model_state_dict": motion_state_dict}, osp.join(motion_encoder_dir, "pytorch_model.bin"))
+            self.config.motion_encoder_cfg = "motion_encoder"
+        if self.get_motion_projector():
+            motion_projector_dir = osp.join(output_dir, "motion_projector")
+            os.makedirs(motion_projector_dir, exist_ok=True)
+            motion_projector_state_dict = OrderedDict(
+                {k.split("motion_projector.")[-1]: v for k, v in state_dict.items() if "motion_projector" in k}
+            )
+            torch.save(motion_projector_state_dict, osp.join(motion_projector_dir, "pytorch_model.bin"))
+            self.config.motion_projector_cfg = "motion_projector"
         ## update and save top-level config
         self.config._name_or_path = output_dir
         self.config.architectures = [self.__class__.__name__]
@@ -213,6 +245,12 @@ class LlavaMetaModel(ABC):
             motion_encoder = motion_encoder[0]
         return motion_encoder
 
+    def get_motion_projector(self):
+        motion_projector = getattr(self, "motion_projector", None)
+        if type(motion_projector) is list:
+            motion_projector = motion_projector[0]
+        return motion_projector
+
     def post_config(self):
         self.training = self.get_llm().training
         ## configuration
@@ -236,13 +274,34 @@ class LlavaMetaModel(ABC):
             if self.get_mm_projector() and not getattr(self.config, "tune_mm_projector", False):
                 self.get_mm_projector().eval()
             if self.get_motion_encoder() and not getattr(self.config, "tune_motion_gru", False):
-                # Keep GRU in eval mode (it's pretrained and frozen)
-                self.get_motion_encoder().gru.eval()
+                # Keep motion encoder in eval mode (it's pretrained and frozen)
+                self.get_motion_encoder().eval()
+            if self.get_motion_projector() and not getattr(self.config, "tune_motion_projector", False):
+                self.get_motion_projector().eval()
 
     def encode_images(self, images):
         image_features = self.get_vision_tower()(images)
         image_features = self.get_mm_projector()(image_features)
         return image_features
+
+    def encode_motions(self, motions):
+        motion_encoder = self.get_motion_encoder()
+        if motion_encoder is None:
+            raise ValueError("Motion encoder is not initialized.")
+        motion_param = next(motion_encoder.parameters())
+        motions = motions.to(device=motion_param.device, dtype=motion_param.dtype)
+        motion_features = motion_encoder(motions)
+        motion_projector = self.get_motion_projector()
+        if motion_projector is not None:
+            motion_features = motion_projector(motion_features)
+        else:
+            hidden_size = getattr(self.get_llm().config, "hidden_size", None)
+            if hidden_size is not None and motion_features.shape[-1] != hidden_size:
+                raise ValueError(
+                    f"Motion projector is None but motion_features dim {motion_features.shape[-1]} "
+                    f"!= hidden_size {hidden_size}."
+                )
+        return motion_features
 
     ## @yunhao: is there a better way to handle function call and attributes for llm?
     ## support beam search
@@ -279,11 +338,14 @@ class LlavaMetaForCausalLM(ABC):
             sp_rank = PROCESS_GROUP_MANAGER.sp_rank
 
         vision_tower = self.get_vision_tower()
-        if vision_tower is None or images is None or (input_ids.shape[1] == 1 and PROCESS_GROUP_MANAGER is None):
+        motion_encoder = self.get_motion_encoder()
+        use_images = vision_tower is not None and images is not None
+        use_motions = motion_encoder is not None and motions is not None
+
+        if (not use_images and not use_motions) or (input_ids.shape[1] == 1 and PROCESS_GROUP_MANAGER is None):
             if (
                 past_key_values is not None
-                and vision_tower is not None
-                and images is not None
+                and (use_images or use_motions)
                 and input_ids.shape[1] == 1
             ):
                 target_shape = past_key_values[-1][-1].shape[-2] + 1
@@ -311,11 +373,21 @@ class LlavaMetaForCausalLM(ABC):
                 labels,
             )
         # handle different image dtypes for packing
-        if type(images) is list:
-            images = torch.cat(images, dim=0)
-        elif images.ndim == 5:  # batch_size x seq_len x image_channels
-            images = images.flatten(0, 1)
-        image_features = self.encode_images(images).to(self.device)
+        image_features = None
+        if use_images:
+            if type(images) is list:
+                images = torch.cat(images, dim=0)
+            elif images.ndim == 5:  # batch_size x seq_len x image_channels
+                images = images.flatten(0, 1)
+            image_features = self.encode_images(images).to(self.device)
+
+        motion_features = None
+        if use_motions:
+            if type(motions) is list:
+                motions = torch.cat(motions, dim=0)
+            elif motions.ndim == 4:  # batch_size x seq_len x window x channels
+                motions = motions.flatten(0, 1)
+            motion_features = self.encode_motions(motions).to(self.device)
         # Note (kentang-mit@): image start / end is not implemented here to support pretraining.
         if getattr(self.config, "turn_mm_projector", False) and getattr(self.config, "mm_use_im_start_end", False):
             raise NotImplementedError
@@ -340,6 +412,7 @@ class LlavaMetaForCausalLM(ABC):
         input_ids_copy = input_ids.clone()
         # kentang-mit@: Otherwise tokenizer out of bounds. Embeddings of image tokens will not be used.
         input_ids_copy[input_ids_copy == IMAGE_TOKEN_INDEX] = 0
+        input_ids_copy[input_ids_copy == MOTION_TOKEN_INDEX] = 0
         input_embeds = self.llm.model.embed_tokens(input_ids_copy)
 
         input_ids = [
@@ -354,55 +427,81 @@ class LlavaMetaForCausalLM(ABC):
         new_input_embeds = []
         new_labels = []
         cur_image_idx = 0
+        cur_motion_idx = 0
 
         # kentang-mit@: If some part of the model is executed in the loop, the the loop length needs to be a constant.
         for batch_idx, cur_input_ids in enumerate(input_ids):
             cur_input_ids = input_ids[batch_idx]
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
-            if num_images == 0:
-                cur_image_features = image_features[0]
+            num_motions = (cur_input_ids == MOTION_TOKEN_INDEX).sum()
+            if num_images == 0 and num_motions == 0:
                 cur_input_embeds_1 = input_embeds_1[batch_idx]
-                cur_input_embeds = torch.cat([cur_input_embeds_1, cur_image_features[0:0]], dim=0)
-                new_input_embeds.append(cur_input_embeds)
+                new_input_embeds.append(cur_input_embeds_1)
                 new_labels.append(labels[batch_idx])
-                # kenang-mit@: we do not have placeholdr image for text-only data now.
                 continue
 
             cur_input_embeds = input_embeds_1[batch_idx]
-            image_token_indices = (
-                [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
+            special_token_indices = (
+                torch.where((cur_input_ids == IMAGE_TOKEN_INDEX) | (cur_input_ids == MOTION_TOKEN_INDEX))[0].tolist()
             )
-            cur_input_ids_noim = []
             cur_labels = labels[batch_idx]
-            cur_labels_noim = []
-            cur_input_embeds_no_im = []
-            for i in range(len(image_token_indices) - 1):
+
+            special_types = []
+            for idx in special_token_indices:
+                if cur_input_ids[idx] == IMAGE_TOKEN_INDEX:
+                    if not use_images:
+                        raise ValueError("Found <image> token but images are not provided.")
+                    special_types.append("image")
+                else:
+                    if not use_motions:
+                        raise ValueError("Found <motion> token but motions are not provided.")
+                    special_types.append("motion")
+
+            segment_boundaries = [-1] + special_token_indices + [cur_input_ids.shape[0]]
+            cur_labels_no_special = []
+            cur_input_embeds_no_special = []
+            for i in range(len(segment_boundaries) - 1):
                 if sp_degree > 1 and i == 0 and sp_rank != 0:  # Handle sequence parallelism
-                    cur_input_ids_noim.append(cur_input_ids[0:0])
-                    cur_labels_noim.append(cur_labels[0:0])
-                    cur_input_embeds_no_im.append(cur_input_embeds[0:0])
+                    cur_labels_no_special.append(cur_labels[0:0])
+                    cur_input_embeds_no_special.append(cur_input_embeds[0:0])
                     continue
-                cur_input_ids_noim.append(cur_input_ids[image_token_indices[i] + 1 : image_token_indices[i + 1]])
-                cur_labels_noim.append(cur_labels[image_token_indices[i] + 1 : image_token_indices[i + 1]])
-                cur_input_embeds_no_im.append(cur_input_embeds[image_token_indices[i] + 1 : image_token_indices[i + 1]])
+                start = segment_boundaries[i] + 1
+                end = segment_boundaries[i + 1]
+                cur_labels_no_special.append(cur_labels[start:end])
+                cur_input_embeds_no_special.append(cur_input_embeds[start:end])
 
             cur_new_input_embeds = []
             cur_new_labels = []
-            for i in range(num_images + 1):
-                cur_new_input_embeds.append(cur_input_embeds_no_im[i])
-                cur_new_labels.append(cur_labels_noim[i])
-                if i < num_images:
-                    cur_image_features = image_features[cur_image_idx]
-                    cur_image_idx += 1
-                    cur_new_input_embeds.append(cur_image_features)
-                    cur_new_labels.append(
-                        torch.full(
-                            (cur_image_features.shape[0],),
-                            IGNORE_INDEX,
-                            device=cur_labels.device,
-                            dtype=cur_labels.dtype,
+            for i in range(len(cur_input_embeds_no_special)):
+                cur_new_input_embeds.append(cur_input_embeds_no_special[i])
+                cur_new_labels.append(cur_labels_no_special[i])
+                if i < len(special_types):
+                    if special_types[i] == "image":
+                        cur_image_features = image_features[cur_image_idx]
+                        cur_image_idx += 1
+                        cur_new_input_embeds.append(cur_image_features)
+                        cur_new_labels.append(
+                            torch.full(
+                                (cur_image_features.shape[0],),
+                                IGNORE_INDEX,
+                                device=cur_labels.device,
+                                dtype=cur_labels.dtype,
+                            )
                         )
-                    )
+                    else:
+                        cur_motion_features = motion_features[cur_motion_idx]
+                        cur_motion_idx += 1
+                        if cur_motion_features.ndim == 1:
+                            cur_motion_features = cur_motion_features.unsqueeze(0)
+                        cur_new_input_embeds.append(cur_motion_features)
+                        cur_new_labels.append(
+                            torch.full(
+                                (cur_motion_features.shape[0],),
+                                IGNORE_INDEX,
+                                device=cur_labels.device,
+                                dtype=cur_labels.dtype,
+                            )
+                        )
 
             cur_new_input_embeds = torch.cat(cur_new_input_embeds)
             cur_new_labels = torch.cat(cur_new_labels)
@@ -823,12 +922,13 @@ class LlavaMetaForCausalLM(ABC):
         self,
         input_ids: Optional[torch.FloatTensor] = None,
         images: Optional[torch.FloatTensor] = None,
+        motions: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.LongTensor] = None,
         **generation_kwargs,
     ):
-        if images is not None:
+        if images is not None or motions is not None:
             (_, _, attention_mask, _, inputs_embeds, _) = self.prepare_inputs_labels_for_multimodal(
-                input_ids, None, attention_mask, None, None, images
+                input_ids, None, attention_mask, None, None, images, motions
             )
         else:
             inputs_embeds = self.get_input_embeddings()(input_ids)

@@ -189,6 +189,12 @@ def load_pretrained_model(
         mm_projector = model.get_mm_projector()
         mm_projector.to(device=device, dtype=torch.float16)
         # mm_projector.to(device=device, dtype=torch.bfloat16)
+        motion_encoder = model.get_motion_encoder()
+        if motion_encoder is not None:
+            motion_encoder.to(device=device, dtype=torch.float16)
+        motion_projector = model.get_motion_projector()
+        if motion_projector is not None:
+            motion_projector.to(device=device, dtype=torch.float16)
         image_processor = vision_tower.image_processor
 
     if hasattr(model.llm.config, "max_sequence_length"):

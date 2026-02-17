@@ -102,6 +102,7 @@ class LlavaLlamaModel(LlavaMetaModel, LlavaMetaForCausalLM, PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         dpo_forward: bool = False,
+        motions: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         self.freezed_module_patch()
 
@@ -114,7 +115,7 @@ class LlavaLlamaModel(LlavaMetaModel, LlavaMetaForCausalLM, PreTrainedModel):
                 inputs_embeds,
                 labels,
             ) = self.prepare_inputs_labels_for_multimodal(
-                input_ids, position_ids, attention_mask, past_key_values, labels, images
+                input_ids, position_ids, attention_mask, past_key_values, labels, images, motions
             )
 
         support_packing = "seqlens_in_batch" in inspect.signature(self.llm.forward).parameters

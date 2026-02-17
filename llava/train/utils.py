@@ -90,6 +90,13 @@ def prepare_config_for_training(
         config.vision_tower_cfg = model_args.vision_tower
     if getattr(config, "mm_projector_cfg", None) is None:
         config.mm_projector_cfg = model_args.mm_projector
+    if getattr(config, "motion_encoder_cfg", None) is None:
+        config.motion_encoder_cfg = model_args.motion_encoder
+    if getattr(config, "motion_projector_cfg", None) is None:
+        if model_args.motion_projector is not None:
+            config.motion_projector_cfg = model_args.motion_projector
+        elif model_args.motion_encoder is not None:
+            config.motion_projector_cfg = "grid2vision"
     # set default dtype
     config.model_dtype = torch.bfloat16 if training_args.bf16 else torch.float16
     config.model_dtype = config.model_dtype.__str__()
@@ -97,6 +104,8 @@ def prepare_config_for_training(
     config.tune_language_model = training_args.tune_language_model
     config.tune_vision_tower = training_args.tune_vision_tower
     config.tune_mm_projector = training_args.tune_mm_projector
+    config.tune_motion_gru = training_args.tune_motion_gru
+    config.tune_motion_projector = training_args.tune_motion_projector
     # set data args
     # Get the image_aspect_ratio from the config if is defined there
     # (case of resuming from a checkpoint) or from the data_args

@@ -626,6 +626,12 @@ def train():
                 model.get_vision_tower().requires_grad_(training_args.tune_vision_tower)
             model.get_mm_projector().requires_grad_(training_args.tune_mm_projector)
             mprint(f"mm projector {training_args.tune_mm_projector}")
+            if model.get_motion_encoder():
+                model.get_motion_encoder().requires_grad_(training_args.tune_motion_gru)
+                mprint(f"motion encoder {training_args.tune_motion_gru}")
+            if model.get_motion_projector():
+                model.get_motion_projector().requires_grad_(training_args.tune_motion_projector)
+                mprint(f"motion projector {training_args.tune_motion_projector}")
             model.print_trainable_parameters()
     else:
         model.get_llm().requires_grad_(training_args.tune_language_model)
@@ -635,9 +641,21 @@ def train():
             model.get_mm_projector().requires_grad_(training_args.tune_mm_projector)
             mprint(f"vision tower {training_args.tune_vision_tower}")
             mprint(f"mm projector {training_args.tune_mm_projector}")
+        if model.get_motion_encoder():
+            model.get_motion_encoder().requires_grad_(training_args.tune_motion_gru)
+            mprint(f"motion encoder {training_args.tune_motion_gru}")
+        if model.get_motion_projector():
+            model.get_motion_projector().requires_grad_(training_args.tune_motion_projector)
+            mprint(f"motion projector {training_args.tune_motion_projector}")
 
         if not any(
-            [training_args.tune_language_model, training_args.tune_vision_tower, training_args.tune_mm_projector]
+            [
+                training_args.tune_language_model,
+                training_args.tune_vision_tower,
+                training_args.tune_mm_projector,
+                training_args.tune_motion_gru,
+                training_args.tune_motion_projector,
+            ]
         ):
             logging.warning("You are not tuning any part of the model. Please check if this is intended.")
 

@@ -46,6 +46,8 @@ class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
     vision_tower: Optional[str] = field(default="google/siglip-so400m-patch14-384")
     mm_projector: Optional[str] = field(default="mlp2x_gelu")
+    motion_encoder: Optional[str] = field(default="/home/rithvik/IROS_proj/NaVILA_iros/llava/model/gru_model/motion_gru_infonce.pt")
+    motion_projector: Optional[str] = field(default=None)
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_layer: Optional[int] = field(default=-1)  # default to the last layer
@@ -71,6 +73,8 @@ class TrainingArguments(transformers.TrainingArguments):
     tune_vision_tower: bool = field(default=False)
     tune_language_model: bool = field(default=False)
     tune_mm_projector: bool = field(default=False)
+    tune_motion_gru: bool = field(default=False)
+    tune_motion_projector: bool = field(default=False)
     model_dtype: str = field(default="torch.bfloat16")
     model_max_length: int = field(
         default=512,

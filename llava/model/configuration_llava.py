@@ -25,6 +25,8 @@ class LlavaConfig(PretrainedConfig):
         llm_cfg=None,
         vision_tower_cfg=None,
         mm_projector_cfg=None,
+        motion_encoder_cfg=None,
+        motion_projector_cfg=None,
         architectures=None,
         resume_path=None,
         hidden_size=None,
@@ -44,6 +46,13 @@ class LlavaConfig(PretrainedConfig):
         s2_max_split_size=None,
         num_time_tokens=None,
         time_token_format=None,
+        motion_input_size=4,
+        motion_hidden_size=256,
+        motion_num_layers=2,
+        motion_embedding_dim=128,
+        motion_dropout=0.1,
+        motion_projector_intermediate_dim=256,
+        motion_projector_dropout=0.1,
         **kwargs,
     ):
         super().__init__()
@@ -51,6 +60,8 @@ class LlavaConfig(PretrainedConfig):
         self.llm_cfg = llm_cfg
         self.vision_tower_cfg = vision_tower_cfg
         self.mm_projector_cfg = mm_projector_cfg
+        self.motion_encoder_cfg = motion_encoder_cfg
+        self.motion_projector_cfg = motion_projector_cfg
         self.resume_path = resume_path
 
         self.hidden_size = hidden_size
@@ -71,3 +82,10 @@ class LlavaConfig(PretrainedConfig):
         self.s2_max_split_size = s2_max_split_size
         self.num_time_tokens = num_time_tokens
         self.time_token_format = time_token_format
+        self.motion_input_size = motion_input_size
+        self.motion_hidden_size = motion_hidden_size
+        self.motion_num_layers = motion_num_layers
+        self.motion_embedding_dim = motion_embedding_dim
+        self.motion_dropout = motion_dropout
+        self.motion_projector_intermediate_dim = motion_projector_intermediate_dim
+        self.motion_projector_dropout = motion_projector_dropout
