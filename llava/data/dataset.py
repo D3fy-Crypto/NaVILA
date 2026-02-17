@@ -13,6 +13,23 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+
+
+"""_summary_
+    This file implements the dataset class for supervised fine-tuning.
+    
+    Code trace: 
+    Called in llava/train/train.py - make_supervised_data_module -> build_dataset(from .builer.py) -> LazyVLNCEDataset(from .dataset.py) 
+    Called in llava/train/train.py - make_supervised_data_module -> DataCollatorForSupervisedDataset
+    
+    The LazyVLNCEDataset dataset class is responsible for loading the data, processing the images, and tokenizing the conversations.
+    DataCollatorForSupervisedDataset is responsible for collating the data into batches and applying necessary padding.
+    
+    def preprocess_plain and def preprocess getting used called in the LazyVLNCEDataset class, which is the main dataset class used for r2r dataset
+    
+    Remaining all are useless classes that are not used in the current training and evaluation pipeline, but we keep them for potential future use and reference.
+"""
+
 import base64
 import copy
 import io
@@ -44,6 +61,8 @@ from llava.constants import (
     DEFAULT_IMAGE_TOKEN,
     IGNORE_INDEX,
     IMAGE_TOKEN_INDEX,
+    MOTION_TOKEN_INDEX,
+    DEFAULT_MOTION_TOKEN
 )
 from llava.eval.mmmu_utils.data_utils import CAT_SHORT2LONG, construct_prompt, load_yaml, process_single_sample
 from llava.mm_utils import opencv_extract_frames, process_image, tokenizer_image_token
@@ -61,7 +80,7 @@ from llava.utils.tokenizer import preprocess_conversation
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 PIL.Image.MAX_IMAGE_PIXELS = 1000000000
 
-
+# def preprocess_multimodal is not getting called in the current class used for r2r dataset, which is LazyVLNCEDataset class.
 def preprocess_multimodal(sources: Sequence[str], data_args: DataArguments) -> Dict:
     is_multimodal = data_args.is_multimodal
     if not is_multimodal:

@@ -25,7 +25,7 @@ import torch
 from PIL import Image
 from transformers import StoppingCriteria
 
-from llava.constants import IMAGE_TOKEN_INDEX
+from llava.constants import IMAGE_TOKEN_INDEX, MOTION_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_MOTION_TOKEN
 
 
 def vlnce_frame_sampling(frames, num_frames=8):
@@ -417,6 +417,72 @@ def tokenizer_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX
         if return_tensors == "pt":
             return torch.tensor(input_ids, dtype=torch.long)
         raise ValueError(f"Unsupported tensor type: {return_tensors}")
+    return input_ids
+
+
+def tokenizer_mm_token(
+    prompt,
+    tokenizer,
+    image_token_index=IMAGE_TOKEN_INDEX,
+    motion_token_index=MOTION_TOKEN_INDEX,
+    return_tensors=None,
+    lstrip=False,
+):
+    """
+    Like tokenizer_image_token, but supports BOTH <image> and <motion> placeholders.
+    Produces a single list of token ids with sentinel indices inserted.
+    """
+
+    # Split while keeping delimiters (<image> / <motion>)
+    pattern = f"({re.escape(DEFAULT_IMAGE_TOKEN)}|{re.escape(DEFAULT_MOTION_TOKEN)})"
+    parts = re.split(pattern, prompt)
+
+    input_ids = []
+    offset = 0
+
+    # Handle BOS exactly like your original
+    if lstrip:
+        offset = 1
+    else:
+        # If the very first non-empty text chunk starts with BOS, keep it and set offset=1
+        # We mimic original behavior by tokenizing the first text chunk (if any).
+        # We'll do a small pre-scan to find the first text part.
+        for p in parts:
+            if p and p not in (DEFAULT_IMAGE_TOKEN, DEFAULT_MOTION_TOKEN):
+                first_chunk_ids = tokenizer(p).input_ids
+                if len(first_chunk_ids) > 0 and first_chunk_ids[0] == tokenizer.bos_token_id:
+                    offset = 1
+                    input_ids.append(first_chunk_ids[0])
+                break
+
+    # Now build sequence
+    for i, part in enumerate(parts):
+        if part is None or part == "":
+            continue
+
+        if part == DEFAULT_IMAGE_TOKEN:
+            # Insert sentinel, but match original "offset + 1" behavior:
+            # original inserts [image_token_index] * (offset+1) then slices by offset.
+            # Net effect: always inserts exactly ONE sentinel, and it doesn't get sliced away.
+            input_ids.append(image_token_index)
+
+        elif part == DEFAULT_MOTION_TOKEN:
+            input_ids.append(motion_token_index)
+
+        else:
+            # Normal text chunk
+            chunk_ids = tokenizer(part).input_ids
+
+            if i == 0 and lstrip:
+                input_ids.extend(chunk_ids)
+            else:
+                input_ids.extend(chunk_ids[offset:])
+
+    if return_tensors is not None:
+        if return_tensors == "pt":
+            return torch.tensor(input_ids, dtype=torch.long)
+        raise ValueError(f"Unsupported tensor type: {return_tensors}")
+
     return input_ids
 
 
