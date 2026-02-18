@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# nohup bash /home/rithvik/IROS_proj/NaVILA_iros/scripts/train/sft_8frames_launchjson.sh > train.log 2>&1 &
 OUTPUT="./checkpoints/navila-8b-8f-sft"
 
 LLAVA_DEBUG_MOTION=1 \
@@ -7,7 +7,6 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --master_addr $MASTER_ADDR --node_rank=$CURRENT_RANK \
     llava/train/train_mem.py \
     --longvila_sampler True \
-    --deepspeed ./scripts/zero3.json \
     --model_name_or_path a8cheng/navila-siglip-llama3-8b-v1.5-pretrain \
     --version llama_3 \
     --seed 42 \
@@ -18,7 +17,7 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --num_video_frames 8 \
     --tune_vision_tower False \
     --tune_mm_projector False \
-    --tune_language_model False \
+    --tune_language_model True \
     --tune_motion_gru False \
     --tune_motion_projector True \
     --mm_vision_select_layer -2 \

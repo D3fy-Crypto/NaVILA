@@ -23,6 +23,15 @@ _C.TENSORBOARD_DIR = "data/tensorboard_dirs/debug"
 _C.RESULTS_DIR = "eval_out/"
 
 # ----------------------------------------------------------------------------
+# NAVILA EVAL CONFIG
+# ----------------------------------------------------------------------------
+_C.NAVILA = CN()
+_C.NAVILA.ENABLE_MOTION = True
+_C.NAVILA.MOTION_WINDOW_SIZE = 10
+_C.NAVILA.MOTION_TRANS_NORM = 0.25
+_C.NAVILA.STRICT_MOTION = True
+
+# ----------------------------------------------------------------------------
 # EVAL CONFIG
 # ----------------------------------------------------------------------------
 _C.EVAL = CN()

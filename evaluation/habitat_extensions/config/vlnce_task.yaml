@@ -34,6 +34,6 @@ TASK:
 DATASET:
     TYPE: VLN-CE-v1
     SPLIT: train
-    DATA_PATH: /home/rithvik/IROS_proj/NaVILA_iros/evaluation/data/datasets/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
+    DATA_PATH: /home/rithvik/IROS_proj/NaVILA_iros/evaluation/data/R2R_VLNCE_v1-3_preprocessed/{split}/{split}.json.gz
     SCENES_DIR: /home/rithvik/IROS_proj/NaVILA_iros/evaluation/data/scene_datasets/
 

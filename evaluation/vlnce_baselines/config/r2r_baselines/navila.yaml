@@ -9,6 +9,12 @@ RESULTS_DIR: eval_out/
 # VILA args
 CONV_TYPE: llama_3
 
+NAVILA:
+    ENABLE_MOTION: true
+    MOTION_WINDOW_SIZE: 10
+    MOTION_TRANS_NORM: 0.25
+    STRICT_MOTION: true
+
 EVAL:
     USE_CKPT_CONFIG: false
     SPLIT: val_unseen

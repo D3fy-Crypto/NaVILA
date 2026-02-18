@@ -39,6 +39,16 @@ class VLNCECollectorEnv(habitat.RLEnv):
         curr_metrics["early_stop"] = self._episode_success()
         return curr_metrics
 
+    def get_agent_pose(self) -> Dict[str, float]:
+        agent_state = self._env.sim.get_agent_state()
+        heading_vector = quaternion_rotate_vector(agent_state.rotation.inverse(), np.array([0, 0, -1]))
+        heading = cartesian_to_polar(-heading_vector[2], heading_vector[0])[1] % (2 * np.pi)
+        return {
+            "x": float(agent_state.position[0]),
+            "z": float(agent_state.position[2]),
+            "heading": float(heading),
+        }
+
 
 @baseline_registry.register_env(name="VLNCEDaggerEnv")
 class VLNCEDaggerEnv(habitat.RLEnv):
@@ -58,6 +68,16 @@ class VLNCEDaggerEnv(habitat.RLEnv):
 
     def get_info(self, observations: Observations) -> Dict[Any, Any]:
         return self.habitat_env.get_metrics()
+
+    def get_agent_pose(self) -> Dict[str, float]:
+        agent_state = self._env.sim.get_agent_state()
+        heading_vector = quaternion_rotate_vector(agent_state.rotation.inverse(), np.array([0, 0, -1]))
+        heading = cartesian_to_polar(-heading_vector[2], heading_vector[0])[1] % (2 * np.pi)
+        return {
+            "x": float(agent_state.position[0]),
+            "z": float(agent_state.position[2]),
+            "heading": float(heading),
+        }
 
 
 @baseline_registry.register_env(name="VLNCEInferenceEnv")

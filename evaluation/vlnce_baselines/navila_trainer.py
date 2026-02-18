@@ -1,6 +1,7 @@
 import copy
 import gc
 import json
+import math
 import os
 import random
 import re
@@ -29,27 +30,67 @@ from vlnce_baselines.common.base_il_trainer import BaseVLNCETrainer
 from vlnce_baselines.common.env_utils import construct_envs, construct_envs_auto_reset_false
 from vlnce_baselines.common.utils import extract_instruction_tokens
 
-from llava.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
+from llava.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_MOTION_TOKEN, IMAGE_TOKEN_INDEX, MOTION_TOKEN_INDEX
 from llava.conversation import SeparatorStyle, conv_templates
-from llava.mm_utils import KeywordsStoppingCriteria, get_model_name_from_path, process_images, tokenizer_image_token
+from llava.mm_utils import (
+    KeywordsStoppingCriteria,
+    get_model_name_from_path,
+    process_images,
+    tokenizer_image_token,
+    tokenizer_mm_token,
+)
 from llava.model.builder import load_pretrained_model
+
+
+def _sample_indices(total_frames, num_frames):
+    if total_frames <= 0:
+        return [0] * num_frames
+    padded = max(0, num_frames - total_frames)
+    effective_len = total_frames + padded
+    sampled = np.linspace(0, effective_len - 1, num=num_frames - 1, endpoint=False, dtype=int).tolist()
+    sampled.append(effective_len - 1)
+    return [max(0, idx - padded) for idx in sampled]
 
 
 def sample_and_pad_images(images, num_frames=8, width=512, height=512):
     frames = copy.deepcopy(images)
+    if len(frames) == 0:
+        frames = [Image.new("RGB", (width, height), color=(0, 0, 0))]
 
-    if len(frames) < num_frames:
-        padding_frames = num_frames - len(frames)
-        while len(frames) < num_frames:
-            frames.insert(0, Image.new("RGB", (width, height), color=(0, 0, 0)))
-    else:
-        padding_frames = 0
+    sampled_indices = _sample_indices(len(frames), num_frames)
+    sampled_frames = [frames[i] for i in sampled_indices]
+    return sampled_frames, sampled_indices
 
-    latest_frame = frames[-1]
-    sampled_indices = np.linspace(0, len(frames) - 1, num=num_frames - 1, endpoint=False, dtype=int)
-    sampled_frames = [frames[i] for i in sampled_indices] + [latest_frame]
 
-    return sampled_frames
+def _wrap_to_pi(delta):
+    return (delta + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _pose_delta(prev_pose, cur_pose):
+    dx = float(cur_pose["x"]) - float(prev_pose["x"])
+    dy = float(cur_pose["z"]) - float(prev_pose["z"])
+    dyaw = _wrap_to_pi(float(cur_pose["heading"]) - float(prev_pose["heading"]))
+    return dx, dy, dyaw
+
+
+def _normalize_delta(dx, dy, dyaw, trans_norm=0.25):
+    return [
+        float(dx) / trans_norm,
+        float(dy) / trans_norm,
+        math.sin(float(dyaw)),
+        math.cos(float(dyaw)),
+    ]
+
+
+def _make_motion_windows(pose_deltas_step, num_frames, window_size=10, trans_norm=0.25):
+    out = torch.zeros(num_frames, window_size, 4, dtype=torch.float32)
+    for t in range(1, num_frames):
+        start = max(0, t - window_size)
+        chunk = pose_deltas_step[start:t]
+        pad = window_size - len(chunk)
+        for j, (dx, dy, dyaw) in enumerate(chunk):
+            out[t, pad + j] = torch.tensor(_normalize_delta(dx, dy, dyaw, trans_norm), dtype=torch.float32)
+    return out
 
 
 @baseline_registry.register_trainer(name="navila")
@@ -108,6 +149,21 @@ class NaVILATrainer(BaseVLNCETrainer):
             config.TASK_CONFIG.TASK.MEASUREMENTS.append("TOP_DOWN_MAP_VLNCE")
 
         config.freeze()
+        navila_cfg = getattr(config, "NAVILA", None)
+        enable_motion = bool(getattr(navila_cfg, "ENABLE_MOTION", True))
+        motion_window_size = int(getattr(navila_cfg, "MOTION_WINDOW_SIZE", 10))
+        motion_trans_norm = float(getattr(navila_cfg, "MOTION_TRANS_NORM", 0.25))
+        strict_motion = bool(getattr(navila_cfg, "STRICT_MOTION", True))
+        if strict_motion:
+            if motion_window_size <= 0:
+                raise ValueError(f"NAVILA.MOTION_WINDOW_SIZE must be > 0, got {motion_window_size}")
+            if motion_trans_norm <= 0:
+                raise ValueError(f"NAVILA.MOTION_TRANS_NORM must be > 0, got {motion_trans_norm}")
+
+        model_motion_encoder = model.get_motion_encoder() if hasattr(model, "get_motion_encoder") else None
+        use_motion = enable_motion and model_motion_encoder is not None
+        if enable_motion and not use_motion:
+            logger.warning("NAVILA.ENABLE_MOTION=True but checkpoint has no motion encoder; using image-only eval.")
 
         if config.EVAL.SAVE_RESULTS:
             fname = os.path.join(
@@ -127,6 +183,7 @@ class NaVILATrainer(BaseVLNCETrainer):
         stats_episodes = {}
 
         past_rgbs = [[] for _ in range(envs.num_envs)]
+        past_poses = [[] for _ in range(envs.num_envs)]
         rgb_frames = [[] for _ in range(envs.num_envs)]  # this is for visualization, contains text and map
 
         if len(config.VIDEO_OPTION) > 0:
@@ -145,10 +202,24 @@ class NaVILATrainer(BaseVLNCETrainer):
         assert envs.num_envs == 1
 
         queue_actions = []
+        logged_motion_stats = False
 
         while envs.num_envs > 0 and len(stats_episodes) < num_eps:
 
             current_episodes = envs.current_episodes()
+            step_poses = [None for _ in range(envs.num_envs)]
+            if use_motion:
+                for i in range(envs.num_envs):
+                    try:
+                        step_poses[i] = envs.call_at(i, "get_agent_pose")
+                    except Exception as exc:
+                        msg = (
+                            f"Failed to query pose for episode_id={current_episodes[i].episode_id}: {exc}. "
+                            "Ensure VLNCEDaggerEnv.get_agent_pose is available."
+                        )
+                        if strict_motion:
+                            raise ValueError(msg) from exc
+                        logger.warning(msg)
 
             if len(queue_actions) > 0:
                 print(f"using queue...{queue_actions[0]}")
@@ -160,24 +231,85 @@ class NaVILATrainer(BaseVLNCETrainer):
                 with torch.no_grad():
                     curr_rgb = Image.fromarray(np.uint8(batch[0]["rgb"].cpu().numpy())).convert("RGB")
 
-                    past_and_current_rgbs = past_rgbs[0] + [curr_rgb]
+                    past_and_current_rgbs_raw = past_rgbs[0] + [curr_rgb]
                     num_video_frames = model.config.num_video_frames
 
-                    past_and_current_rgbs = sample_and_pad_images(past_and_current_rgbs, num_frames=num_video_frames)
+                    past_and_current_rgbs, sampled_indices = sample_and_pad_images(
+                        past_and_current_rgbs_raw,
+                        num_frames=num_video_frames,
+                    )
 
                     instruction = current_episodes[0].instruction.instruction_text
+                    use_motion_this_step = use_motion and (step_poses[0] is not None)
+                    motion_tensor = None
 
-                    interleaved_images = "<image>\n" * (len(past_and_current_rgbs) - 1)
+                    if use_motion and step_poses[0] is None and strict_motion:
+                        raise ValueError(
+                            f"Motion enabled but pose is unavailable for episode_id={current_episodes[0].episode_id}"
+                        )
 
-                    frame_length = len(past_and_current_rgbs)
-                    print(f"input frame length {frame_length}")
+                    if use_motion_this_step:
+                        past_and_current_poses = past_poses[0] + [step_poses[0]]
+                        if strict_motion and len(past_and_current_poses) != len(past_and_current_rgbs_raw):
+                            raise ValueError(
+                                "Pose/frame history mismatch: "
+                                f"poses={len(past_and_current_poses)} frames={len(past_and_current_rgbs_raw)}"
+                            )
 
-                    question = (
-                        f"Imagine you are a robot programmed for navigation tasks. You have been given a video "
-                        f'of historical observations {interleaved_images}, and current observation <image>\n. Your assigned task is: "{instruction}" '
-                        f"Analyze this series of images to decide your next action, which could be turning left or right by a specific "
-                        f"degree, moving forward a certain distance, or stop if the task is completed."
-                    )
+                        step_pose_deltas = []
+                        for idx in range(1, len(past_and_current_poses)):
+                            step_pose_deltas.append(_pose_delta(past_and_current_poses[idx - 1], past_and_current_poses[idx]))
+
+                        pose_deltas_step = []
+                        for j in range(1, len(sampled_indices)):
+                            prev_idx = sampled_indices[j - 1]
+                            curr_idx = sampled_indices[j]
+                            dx = dy = dyaw = 0.0
+                            max_k = min(curr_idx, len(step_pose_deltas))
+                            for k in range(prev_idx, max_k):
+                                d = step_pose_deltas[k]
+                                dx += float(d[0])
+                                dy += float(d[1])
+                                dyaw += float(d[2])
+                            pose_deltas_step.append((dx, dy, dyaw))
+                        if len(pose_deltas_step) != max(0, num_video_frames - 1):
+                            pose_deltas_step = pose_deltas_step[: num_video_frames - 1] + [(0.0, 0.0, 0.0)] * max(
+                                0, (num_video_frames - 1) - len(pose_deltas_step)
+                            )
+
+                        motion_tensor = _make_motion_windows(
+                            pose_deltas_step=pose_deltas_step,
+                            num_frames=num_video_frames,
+                            window_size=motion_window_size,
+                            trans_norm=motion_trans_norm,
+                        )
+                        if strict_motion and tuple(motion_tensor.shape) != (num_video_frames, motion_window_size, 4):
+                            raise ValueError(
+                                f"Invalid motion tensor shape {tuple(motion_tensor.shape)}; "
+                                f"expected ({num_video_frames}, {motion_window_size}, 4)"
+                            )
+
+                        hist_pairs = (DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n") * max(
+                            0, num_video_frames - 1
+                        )
+                        cur_pair = DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n"
+                        question = (
+                            "Imagine you are a robot programmed for navigation tasks. "
+                            f"You have been given a video of historical observations {hist_pairs}, "
+                            f"and current observation {cur_pair}. "
+                            f'Your assigned task is: "{instruction}" '
+                            "Analyze this series of observations to decide your next action, which could be "
+                            "turning left or right by a specific degree, moving forward a certain distance, "
+                            "or stop if the task is completed."
+                        )
+                    else:
+                        interleaved_images = "<image>\n" * (len(past_and_current_rgbs) - 1)
+                        question = (
+                            "Imagine you are a robot programmed for navigation tasks. You have been given a video "
+                            f'of historical observations {interleaved_images}, and current observation <image>\n. Your assigned task is: "{instruction}" '
+                            "Analyze this series of images to decide your next action, which could be turning left or right by a specific "
+                            "degree, moving forward a certain distance, or stop if the task is completed."
+                        )
 
                     conv_mode = "llama_3"
                     conv = conv_templates[conv_mode].copy()
@@ -188,27 +320,72 @@ class NaVILATrainer(BaseVLNCETrainer):
                     images_tensor = process_images(past_and_current_rgbs, image_processor, model.config).to(
                         model.device, dtype=torch.float16
                     )
-                    input_ids = (
-                        tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
-                        .unsqueeze(0)
-                        .cuda()
-                    )
+                    if use_motion_this_step:
+                        input_ids = tokenizer_mm_token(
+                            prompt,
+                            tokenizer,
+                            image_token_index=IMAGE_TOKEN_INDEX,
+                            motion_token_index=MOTION_TOKEN_INDEX,
+                            return_tensors="pt",
+                        ).unsqueeze(0)
+                    else:
+                        input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0)
+                    input_ids = input_ids.to(model.device)
+
+                    num_image_tokens = int((input_ids[0] == IMAGE_TOKEN_INDEX).sum().item())
+                    num_motion_tokens = int((input_ids[0] == MOTION_TOKEN_INDEX).sum().item())
+                    if use_motion_this_step and strict_motion:
+                        if num_image_tokens != num_video_frames or num_motion_tokens != num_video_frames:
+                            raise ValueError(
+                                "Prompt multimodal token mismatch: "
+                                f"image_tokens={num_image_tokens} motion_tokens={num_motion_tokens} "
+                                f"expected={num_video_frames}"
+                            )
+                        if motion_tensor is None:
+                            raise ValueError("Motion enabled but motion tensor was not created.")
+                    if motion_tensor is not None:
+                        motion_tensor = motion_tensor.to(model.device, dtype=torch.float32)
+                        if strict_motion and motion_tensor.shape[0] != num_motion_tokens:
+                            raise ValueError(
+                                f"Motions/token mismatch: motions={motion_tensor.shape[0]} motion_tokens={num_motion_tokens}"
+                            )
+                    if use_motion_this_step and not logged_motion_stats:
+                        logger.info(
+                            "[NaVILA motion] image_tokens=%s motion_tokens=%s motions_shape=%s",
+                            num_image_tokens,
+                            num_motion_tokens,
+                            tuple(motion_tensor.shape),
+                        )
+                        logged_motion_stats = True
 
                     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
                     keywords = [stop_str]
                     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
 
                     with torch.inference_mode():
-                        output_ids = model.generate(
-                            input_ids,
-                            images=images_tensor.half().cuda(),
-                            do_sample=False,
-                            temperature=0.0,
-                            max_new_tokens=32,
-                            use_cache=True,
-                            stopping_criteria=[stopping_criteria],
-                            pad_token_id=tokenizer.eos_token_id,
-                        )
+                        if use_motion_this_step:
+                            output_ids = model.generate(
+                                input_ids,
+                                images=images_tensor,
+                                motions=motion_tensor,
+                                do_sample=False,
+                                temperature=0.0,
+                                max_new_tokens=32,
+                                use_cache=True,
+                                stopping_criteria=[stopping_criteria],
+                                pad_token_id=tokenizer.eos_token_id,
+                            )
+                        else:
+                            output_ids = model.generate(
+                                input_ids,
+                                images=images_tensor,
+                                do_sample=False,
+                                temperature=0.0,
+                                max_new_tokens=32,
+                                use_cache=True,
+                                stopping_criteria=[stopping_criteria],
+                                pad_token_id=tokenizer.eos_token_id,
+                            )
 
                     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
                     outputs = outputs.strip()
@@ -287,6 +464,8 @@ class NaVILATrainer(BaseVLNCETrainer):
             # reset envs and observations if necessary
             for i in range(envs.num_envs):
                 past_rgbs[i].append(Image.fromarray(batch[0]["rgb"].cpu().numpy()).convert("RGB"))
+                if use_motion and step_poses[i] is not None:
+                    past_poses[i].append(step_poses[i])
 
                 if len(config.VIDEO_OPTION) > 0:
                     frame = observations_to_image(observations[i], infos[i])
@@ -300,6 +479,8 @@ class NaVILATrainer(BaseVLNCETrainer):
                 stats_episodes[ep_id] = infos[i]
                 observations[i] = envs.reset_at(i)[0]
                 past_rgbs[i] = []
+                past_poses[i] = []
+                queue_actions = []
 
                 if config.use_pbar:
                     pbar.update()
@@ -339,11 +520,13 @@ class NaVILATrainer(BaseVLNCETrainer):
                 if next_episodes[i].episode_id in stats_episodes:
                     envs_to_pause.append(i)
 
-            (envs, batch, rgb_frames,) = self._pause_envs(
+            (envs, batch, rgb_frames, past_rgbs, past_poses,) = self._pause_envs(
                 envs_to_pause,
                 envs,
                 batch,
                 rgb_frames,
+                past_rgbs=past_rgbs,
+                past_poses=past_poses,
             )
 
         envs.close()
@@ -360,6 +543,8 @@ class NaVILATrainer(BaseVLNCETrainer):
         envs,
         batch,
         rgb_frames=None,
+        past_rgbs=None,
+        past_poses=None,
     ):
         # pausing envs with no new episode
         if len(envs_to_pause) > 0:
@@ -374,11 +559,17 @@ class NaVILATrainer(BaseVLNCETrainer):
 
             if rgb_frames is not None:
                 rgb_frames = [rgb_frames[i] for i in state_index]
+            if past_rgbs is not None:
+                past_rgbs = [past_rgbs[i] for i in state_index]
+            if past_poses is not None:
+                past_poses = [past_poses[i] for i in state_index]
 
         return (
             envs,
             batch,
             rgb_frames,
+            past_rgbs,
+            past_poses,
         )
 
     def eval(self) -> None:
