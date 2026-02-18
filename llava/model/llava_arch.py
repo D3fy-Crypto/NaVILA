@@ -12,6 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+import json
 import logging
 import os
 import os.path as osp
@@ -159,6 +160,38 @@ class LlavaMetaModel(ABC):
             # state_dict = accelerator.get_state_dict(is_deepspeed_enabled)
             state_dict = self.state_dict()
 
+        needs_safetensors = self.get_motion_encoder() or self.get_motion_projector()
+        safe_save_file = None
+        if needs_safetensors:
+            try:
+                from safetensors.torch import save_file as safe_save_file  # type: ignore
+            except Exception as exc:
+                raise ImportError(
+                    "safetensors is required to save motion_encoder/motion_projector checkpoints."
+                ) from exc
+
+        # Ensure we have a full state dict (some callers may pass a filtered state_dict).
+        full_state_dict = state_dict
+        if not any(k.startswith("motion_encoder.") for k in full_state_dict) or not any(
+            k.startswith("motion_projector.") for k in full_state_dict
+        ):
+            full_state_dict = self.state_dict()
+
+        def _save_module_state(
+            save_dir: str,
+            module_state: OrderedDict,
+            module_name: str,
+            config_dict: Optional[dict] = None,
+        ) -> None:
+            os.makedirs(save_dir, exist_ok=True)
+            if config_dict is not None:
+                with open(osp.join(save_dir, "config.json"), "w", encoding="utf-8") as f:
+                    json.dump(config_dict, f, indent=2, sort_keys=True)
+            safe_path = osp.join(save_dir, "model.safetensors")
+            safe_state = {k: v.detach().cpu() for k, v in module_state.items()}
+            safe_save_file(safe_state, safe_path)
+            print(f"saving {module_name} to {save_dir} (safetensors)")
+
         if getattr(self, "tokenizer", None):
             self.tokenizer.save_pretrained(osp.join(output_dir, "llm"))
 
@@ -173,7 +206,11 @@ class LlavaMetaModel(ABC):
             print(f"saving vision_tower to {osp.join(output_dir, 'vision_tower')}")
             self.vision_tower.config._name_or_path = osp.join(output_dir, "vision_tower")
             vision_tower_state_dict = OrderedDict(
-                {k.split("vision_tower.vision_tower.")[-1]: v for k, v in state_dict.items() if "vision_tower" in k}
+                {
+                    k.split("vision_tower.vision_tower.")[-1]: v
+                    for k, v in state_dict.items()
+                    if "vision_tower" in k
+                }
             )
             self.vision_tower.vision_tower.save_pretrained(
                 os.path.join(output_dir, "vision_tower"),
@@ -198,19 +235,51 @@ class LlavaMetaModel(ABC):
             self.config.mm_projector_cfg = self.mm_projector.config
         if self.get_motion_encoder():
             motion_encoder_dir = osp.join(output_dir, "motion_encoder")
-            os.makedirs(motion_encoder_dir, exist_ok=True)
             motion_state_dict = OrderedDict(
-                {k.split("motion_encoder.")[-1]: v for k, v in state_dict.items() if "motion_encoder" in k}
+                {
+                    k.split("motion_encoder.")[-1]: v
+                    for k, v in full_state_dict.items()
+                    if k.startswith("motion_encoder.")
+                }
             )
-            torch.save({"model_state_dict": motion_state_dict}, osp.join(motion_encoder_dir, "pytorch_model.bin"))
+            motion_encoder_config = {
+                "model_type": "motion_gru",
+                "input_size": getattr(self.config, "motion_input_size", None),
+                "hidden_size": getattr(self.config, "motion_hidden_size", None),
+                "num_layers": getattr(self.config, "motion_num_layers", None),
+                "embedding_dim": getattr(self.config, "motion_embedding_dim", None),
+                "dropout": getattr(self.config, "motion_dropout", None),
+            }
+            _save_module_state(
+                motion_encoder_dir,
+                motion_state_dict,
+                "motion_encoder",
+                config_dict=motion_encoder_config,
+            )
             self.config.motion_encoder_cfg = "motion_encoder"
         if self.get_motion_projector():
             motion_projector_dir = osp.join(output_dir, "motion_projector")
-            os.makedirs(motion_projector_dir, exist_ok=True)
             motion_projector_state_dict = OrderedDict(
-                {k.split("motion_projector.")[-1]: v for k, v in state_dict.items() if "motion_projector" in k}
+                {
+                    k.split("motion_projector.")[-1]: v
+                    for k, v in full_state_dict.items()
+                    if k.startswith("motion_projector.")
+                }
             )
-            torch.save(motion_projector_state_dict, osp.join(motion_projector_dir, "pytorch_model.bin"))
+            motion_projector_config = {
+                "model_type": "motion_projector",
+                "projector_type": getattr(self.config, "motion_projector_cfg", None),
+                "embedding_dim": getattr(self.config, "motion_embedding_dim", None),
+                "intermediate_dim": getattr(self.config, "motion_projector_intermediate_dim", None),
+                "output_dim": getattr(self.config, "hidden_size", None),
+                "dropout": getattr(self.config, "motion_projector_dropout", None),
+            }
+            _save_module_state(
+                motion_projector_dir,
+                motion_projector_state_dict,
+                "motion_projector",
+                config_dict=motion_projector_config,
+            )
             self.config.motion_projector_cfg = "motion_projector"
         ## update and save top-level config
         self.config._name_or_path = output_dir

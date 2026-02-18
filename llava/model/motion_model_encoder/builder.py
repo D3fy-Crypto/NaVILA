@@ -14,6 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import os
 import warnings
 from typing import Optional
@@ -24,6 +25,14 @@ from transformers import PretrainedConfig
 from .motion_gru import MotionGRU
 
 DEFAULT_GRU_CKPT = "/home/rithvik/IROS_proj/NaVILA_iros/llava/model/gru_model/motion_gru_infonce.pt"
+
+try:
+    from safetensors.torch import load_file as safe_load_file
+
+    _HAS_SAFETENSORS = True
+except Exception:
+    safe_load_file = None
+    _HAS_SAFETENSORS = False
 
 
 def _resolve_path(model_path_or_name: str, config: PretrainedConfig) -> Optional[str]:
@@ -47,7 +56,22 @@ def _resolve_path(model_path_or_name: str, config: PretrainedConfig) -> Optional
     return None
 
 
+def _load_config_from_dir(dir_path: str) -> dict:
+    config_path = os.path.join(dir_path, "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
 def _load_state_dict(path: str) -> dict:
+    if path.endswith(".safetensors"):
+        if not _HAS_SAFETENSORS:
+            raise ImportError("safetensors is required to load .safetensors checkpoints.")
+        return safe_load_file(path)
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(checkpoint, dict):
         if "model_state_dict" in checkpoint:
@@ -65,11 +89,28 @@ def build_motion_encoder(model_path_or_name: str, config: PretrainedConfig) -> O
         else:
             print(f"[MotionGRU] Default checkpoint not found at {DEFAULT_GRU_CKPT}; using random init.")
 
-    input_size = getattr(config, "motion_input_size", 4)
-    hidden_size = getattr(config, "motion_hidden_size", 256)
-    num_layers = getattr(config, "motion_num_layers", 2)
-    embedding_dim = getattr(config, "motion_embedding_dim", 128)
-    dropout = getattr(config, "motion_dropout", 0.1)
+    resolved_path = _resolve_path(model_path_or_name, config)
+
+    config_dir = None
+    if isinstance(model_path_or_name, str):
+        if os.path.isdir(model_path_or_name):
+            config_dir = model_path_or_name
+        else:
+            root_path = getattr(config, "_name_or_path", None) or getattr(config, "resume_path", None)
+            if root_path:
+                candidate = os.path.join(root_path, model_path_or_name)
+                if os.path.isdir(candidate):
+                    config_dir = candidate
+    if config_dir is None and isinstance(resolved_path, str) and os.path.isfile(resolved_path):
+        config_dir = os.path.dirname(resolved_path)
+
+    config_overrides = _load_config_from_dir(config_dir) if config_dir else {}
+
+    input_size = config_overrides.get("input_size", getattr(config, "motion_input_size", 4))
+    hidden_size = config_overrides.get("hidden_size", getattr(config, "motion_hidden_size", 256))
+    num_layers = config_overrides.get("num_layers", getattr(config, "motion_num_layers", 2))
+    embedding_dim = config_overrides.get("embedding_dim", getattr(config, "motion_embedding_dim", 128))
+    dropout = config_overrides.get("dropout", getattr(config, "motion_dropout", 0.1))
 
     motion_encoder = MotionGRU(
         input_size=input_size,
@@ -78,8 +119,6 @@ def build_motion_encoder(model_path_or_name: str, config: PretrainedConfig) -> O
         embedding_dim=embedding_dim,
         dropout=dropout,
     )
-
-    resolved_path = _resolve_path(model_path_or_name, config)
     if resolved_path is not None:
         if os.path.isdir(resolved_path):
             for fname in ("pytorch_model.bin", "model.safetensors", "motion_gru_infonce.pt"):

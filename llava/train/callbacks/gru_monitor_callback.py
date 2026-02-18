@@ -20,6 +20,24 @@ class GRUTrainingMonitorCallback(transformers.TrainerCallback):
         self._logged_status = False
         self._grad_sumsq: Dict[str, float] = {}
         self._hook_handles: List = []
+        self._wandb = None
+        self._report_to_wandb = False
+        self._warned_no_wandb_run = False
+        self._saw_loss_log = False
+
+    def _init_wandb(self, args) -> None:
+        report_to = getattr(args, "report_to", None) or []
+        if isinstance(report_to, str):
+            report_to = [report_to]
+        self._report_to_wandb = "wandb" in report_to
+        if not self._report_to_wandb:
+            return
+        try:
+            import wandb  # type: ignore
+
+            self._wandb = wandb
+        except Exception as exc:
+            raise ImportError("wandb is required to log grad norms to Weights & Biases.") from exc
 
     def _accumulate_grad(self, key: str, grad):
         if grad is None:
@@ -114,6 +132,7 @@ class GRUTrainingMonitorCallback(transformers.TrainerCallback):
             self._grad_sumsq[key] = 0.0
 
     def on_train_begin(self, args, state, control, **kwargs):
+        self._init_wandb(args)
         model = kwargs.get("model", None)
         if model is not None:
             self._log_model_status(model)
@@ -158,6 +177,19 @@ class GRUTrainingMonitorCallback(transformers.TrainerCallback):
             metrics[key] = math.sqrt(sumsq)
         if metrics:
             print(f"[Step {state.global_step}] Gradient norms: {metrics}")
+            if self._wandb is not None and self._report_to_wandb:
+                if self._wandb.run is None:
+                    if not self._warned_no_wandb_run:
+                        logger.warning("wandb is enabled but no active run found; grad norms will not be logged.")
+                        self._warned_no_wandb_run = True
+                else:
+                    self._wandb.log(metrics, step=state.global_step)
         # Reset accumulators after logging.
         for key in list(self._grad_sumsq.keys()):
             self._grad_sumsq[key] = 0.0
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is None:
+            return
+        if "loss" in logs or "train/loss" in logs:
+            self._saw_loss_log = True
