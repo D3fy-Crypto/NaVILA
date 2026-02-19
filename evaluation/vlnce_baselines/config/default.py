@@ -21,6 +21,7 @@ _C.VIDEO_OPTION = ["disk"]  # options: "disk", "tensorboard"
 _C.VIDEO_DIR = "data/videos/debug"
 _C.TENSORBOARD_DIR = "data/tensorboard_dirs/debug"
 _C.RESULTS_DIR = "eval_out/"
+_C.EVAL_MODEL_BASE_PATH = ""
 
 # ----------------------------------------------------------------------------
 # NAVILA EVAL CONFIG

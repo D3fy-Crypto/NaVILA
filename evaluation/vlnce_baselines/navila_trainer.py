@@ -122,8 +122,52 @@ class NaVILATrainer(BaseVLNCETrainer):
         logger.info(f"checkpoint_path: {checkpoint_path}")
 
         # build model
-        model_name = os.path.basename(os.path.normpath(checkpoint_path))
-        tokenizer, model, image_processor, context_len = load_pretrained_model(checkpoint_path, model_name)
+        model_name = get_model_name_from_path(checkpoint_path)
+        model_base = str(getattr(self.config, "EVAL_MODEL_BASE_PATH", "")).strip() or None
+
+        adapter_cfg_path = os.path.join(checkpoint_path, "adapter_config.json")
+        adapter_model_paths = [
+            os.path.join(checkpoint_path, "adapter_model.safetensors"),
+            os.path.join(checkpoint_path, "adapter_model.bin"),
+        ]
+        is_adapter_checkpoint = os.path.isfile(adapter_cfg_path) and any(
+            os.path.isfile(p) for p in adapter_model_paths
+        )
+        if is_adapter_checkpoint and model_base is None:
+            raise ValueError(
+                "Adapter checkpoint detected for eval, but EVAL_MODEL_BASE_PATH is empty. "
+                f"checkpoint_path={checkpoint_path}"
+            )
+        if model_base is not None and not os.path.isdir(model_base):
+            raise ValueError(f"EVAL_MODEL_BASE_PATH does not exist: {model_base}")
+        if is_adapter_checkpoint and model_base is not None:
+            required_base_entries = [
+                "config.json",
+                "llm",
+                "vision_tower",
+                "mm_projector",
+                "motion_encoder",
+                "motion_projector",
+            ]
+            missing = [name for name in required_base_entries if not os.path.exists(os.path.join(model_base, name))]
+            if missing:
+                raise ValueError(
+                    "EVAL_MODEL_BASE_PATH is missing required files/dirs for multimodal eval: "
+                    + ", ".join(missing)
+                    + f" (base={model_base})"
+                )
+            logger.info(f"Loading adapter checkpoint with base model:\n  adapter={checkpoint_path}\n  base={model_base}")
+            tokenizer, model, image_processor, context_len = load_pretrained_model(
+                checkpoint_path,
+                model_name,
+                model_base=model_base,
+            )
+        else:
+            if model_base is not None:
+                logger.warning(
+                    "EVAL_MODEL_BASE_PATH is set but checkpoint is not adapter-only; ignoring base and loading checkpoint directly."
+                )
+            tokenizer, model, image_processor, context_len = load_pretrained_model(checkpoint_path, model_name)
         model = model.cuda()
 
         config = self.config.clone()
@@ -203,10 +247,13 @@ class NaVILATrainer(BaseVLNCETrainer):
 
         queue_actions = []
         logged_motion_stats = False
+        eval_step_idx = 0
 
         while envs.num_envs > 0 and len(stats_episodes) < num_eps:
 
             current_episodes = envs.current_episodes()
+            current_ep_id = current_episodes[0].episode_id
+            step_idx = eval_step_idx
             step_poses = [None for _ in range(envs.num_envs)]
             if use_motion:
                 for i in range(envs.num_envs):
@@ -222,10 +269,16 @@ class NaVILATrainer(BaseVLNCETrainer):
                         logger.warning(msg)
 
             if len(queue_actions) > 0:
-                print(f"using queue...{queue_actions[0]}")
-                outputs = envs.step([queue_actions[0]])
+                queued_action = queue_actions[0]
+                outputs = envs.step([queued_action])
                 queue_actions.pop(0)
-                print(f"queue length after using...{len(queue_actions)}")
+                logger.info(
+                    "[NaVILA eval][queue] ep=%s step=%s action=%s remaining=%s",
+                    current_ep_id,
+                    step_idx,
+                    queued_action,
+                    len(queue_actions),
+                )
 
             else:
                 with torch.no_grad():
@@ -393,7 +446,13 @@ class NaVILATrainer(BaseVLNCETrainer):
                     if outputs.endswith(stop_str):
                         outputs = outputs[: -len(stop_str)]
                     outputs = outputs.strip()
-                    print(outputs)
+                    outputs_sanitized = outputs.replace("\r", "\\r").replace("\n", "\\n")
+                    logger.info(
+                        '[NaVILA eval][model_output] ep=%s step=%s text="%s"',
+                        current_ep_id,
+                        step_idx,
+                        outputs_sanitized,
+                    )
 
                     # Define the regex patterns for each action
                     patterns = {
@@ -412,52 +471,123 @@ class NaVILATrainer(BaseVLNCETrainer):
 
                     try:
                         actions = [map_string_to_action(outputs)]
-                    except:
+                    except Exception:
+                        logger.info(
+                            "[NaVILA eval][fallback] ep=%s step=%s reason=action_map_exception value=1",
+                            current_ep_id,
+                            step_idx,
+                        )
                         actions = [1]
-                    print(actions)
+                    logger.info(
+                        "[NaVILA eval][parsed] ep=%s step=%s action=%s",
+                        current_ep_id,
+                        step_idx,
+                        actions[0],
+                    )
 
                 if actions[0] == 1:
+                    queued_added = 0
                     try:
                         match = re.search(r"move forward (\d+) cm", outputs)
                         distance = int(match.group(1))
-                    except:
+                    except Exception:
                         distance = 25
+                        logger.info(
+                            "[NaVILA eval][fallback] ep=%s step=%s field=distance reason=regex_miss value=%s",
+                            current_ep_id,
+                            step_idx,
+                            distance,
+                        )
                     if (distance % 25) != 0:
                         distance = min([25, 50, 75], key=lambda x: abs(x - distance))
                     outputs = envs.step([1])
 
-                    for _ in range(int(distance // 25) - 1):
+                    queued_added = int(distance // 25) - 1
+                    for _ in range(queued_added):
                         queue_actions.append(1)
+                    logger.info(
+                        "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
+                        current_ep_id,
+                        step_idx,
+                        1,
+                        queued_added,
+                        len(queue_actions),
+                    )
 
                 elif actions[0] == 2:
+                    queued_added = 0
                     try:
                         match = re.search(r"turn left (\d+) degree", outputs)
                         degree = int(match.group(1))
-                    except:
+                    except Exception:
                         degree = 15
+                        logger.info(
+                            "[NaVILA eval][fallback] ep=%s step=%s field=degree reason=regex_miss value=%s",
+                            current_ep_id,
+                            step_idx,
+                            degree,
+                        )
                     if (degree % 15) != 0:
                         degree = min([15, 30, 45], key=lambda x: abs(x - degree))
                     outputs = envs.step([2])
 
-                    for _ in range(int(degree // 15) - 1):
+                    queued_added = int(degree // 15) - 1
+                    for _ in range(queued_added):
                         queue_actions.append(2)
-                    print(f"queue length: {len(queue_actions)}")
+                    logger.info(
+                        "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
+                        current_ep_id,
+                        step_idx,
+                        2,
+                        queued_added,
+                        len(queue_actions),
+                    )
 
                 elif actions[0] == 3:
+                    queued_added = 0
                     try:
                         match = re.search(r"turn right (\d+) degree", outputs)
                         degree = int(match.group(1))
-                    except:
+                    except Exception:
                         degree = 15
+                        logger.info(
+                            "[NaVILA eval][fallback] ep=%s step=%s field=degree reason=regex_miss value=%s",
+                            current_ep_id,
+                            step_idx,
+                            degree,
+                        )
                     if (degree % 15) != 0:
                         degree = min([15, 30, 45], key=lambda x: abs(x - degree))
                     outputs = envs.step([3])
 
-                    for _ in range(int(degree // 15) - 1):
+                    queued_added = int(degree // 15) - 1
+                    for _ in range(queued_added):
                         queue_actions.append(3)
+                    logger.info(
+                        "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
+                        current_ep_id,
+                        step_idx,
+                        3,
+                        queued_added,
+                        len(queue_actions),
+                    )
 
                 else:  # 0, stop
+                    if actions[0] is None:
+                        logger.warning(
+                            "[NaVILA eval][fallback] ep=%s step=%s reason=action_parse_none value=None",
+                            current_ep_id,
+                            step_idx,
+                        )
                     outputs = envs.step(actions)
+                    logger.info(
+                        "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
+                        current_ep_id,
+                        step_idx,
+                        actions[0],
+                        0,
+                        len(queue_actions),
+                    )
 
             observations, _, dones, infos = [list(x) for x in zip(*outputs)]
 
@@ -512,6 +642,7 @@ class NaVILATrainer(BaseVLNCETrainer):
             )
             batch = batch_obs(observations, self.device)
             batch = apply_obs_transforms_batch(batch, self.obs_transforms)
+            eval_step_idx += 1
 
             envs_to_pause = []
             next_episodes = envs.current_episodes()

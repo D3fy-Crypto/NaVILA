@@ -41,6 +41,18 @@ def load_pretrained_model(
     if device != "cuda":
         kwargs["device_map"] = {"": device}
 
+    adapter_cfg_path = os.path.join(model_path, "adapter_config.json")
+    adapter_weights_paths = [
+        os.path.join(model_path, "adapter_model.safetensors"),
+        os.path.join(model_path, "adapter_model.bin"),
+    ]
+    is_adapter_checkpoint = os.path.isfile(adapter_cfg_path) and any(os.path.isfile(p) for p in adapter_weights_paths)
+    if is_adapter_checkpoint and model_base is None:
+        raise ValueError(
+            "Adapter-only checkpoint requires `model_base`. "
+            f"Got model_path={model_path} with no model_base."
+        )
+
     if load_8bit:
         kwargs["load_in_8bit"] = True
     elif load_4bit:
@@ -55,16 +67,21 @@ def load_pretrained_model(
         kwargs["torch_dtype"] = torch.float16
         # kwargs["torch_dtype"] = torch.bfloat16
 
-    if is_mm_model(model_path):
+    mm_probe_path = model_base if is_adapter_checkpoint else model_path
+    if is_mm_model(mm_probe_path):
         # Load LLaVA model
         ## TODO @yunhao: mind fixing lora
         if "lora" in model_name.lower() and model_base is None:
             warnings.warn(
                 "There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument. Detailed instruction: https://github.com/haotian-liu/LLaVA#launch-a-model-worker-lora-weights-unmerged."
             )
-        if ("lora" in model_name.lower() or "dora" in model_name.lower()) and model_base is not None:
-            lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
-            print(lora_cfg_pretrained)
+        is_lora_model = is_adapter_checkpoint or "lora" in model_name.lower() or "dora" in model_name.lower()
+        if is_lora_model and model_base is not None:
+            if os.path.isfile(os.path.join(model_path, "config.json")):
+                lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
+                print(lora_cfg_pretrained)
+            elif is_adapter_checkpoint:
+                print(f"Detected adapter-only checkpoint: {model_path}")
             print("Loading LLaVA from base model...")
             config = AutoConfig.from_pretrained(model_base)
             prepare_config_for_eval(config, kwargs)
@@ -175,7 +192,7 @@ def load_pretrained_model(
                 model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
     model.eval()
     image_processor = None
-    if is_mm_model(model_path):
+    if is_mm_model(mm_probe_path):
         mm_use_im_start_end = getattr(model.config, "mm_use_im_start_end", False)
         mm_use_im_patch_token = getattr(model.config, "mm_use_im_patch_token", True)
         if mm_use_im_patch_token:
