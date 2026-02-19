@@ -107,7 +107,10 @@ class MultimodalProjector(PreTrainedModel):
                 raise ValueError(f"Unknown projector type: {mm_projector_type}")
 
     def forward(self, x, *args, **kwargs):
-        return self.layers(x)
+        print(f"Input shape for mm proj: {x.shape}")
+        out = self.layers(x)
+        print(f"Output shape for mm proj: {out.shape}")
+        return out
 
 
 AutoConfig.register("v2l_projector", MultimodalProjectorConfig)
