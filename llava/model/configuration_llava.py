@@ -27,6 +27,7 @@ class LlavaConfig(PretrainedConfig):
         mm_projector_cfg=None,
         motion_encoder_cfg=None,
         motion_projector_cfg=None,
+        motion_encode=True,
         architectures=None,
         resume_path=None,
         hidden_size=None,
@@ -62,6 +63,7 @@ class LlavaConfig(PretrainedConfig):
         self.mm_projector_cfg = mm_projector_cfg
         self.motion_encoder_cfg = motion_encoder_cfg
         self.motion_projector_cfg = motion_projector_cfg
+        self.motion_encode = motion_encode
         self.resume_path = resume_path
 
         self.hidden_size = hidden_size

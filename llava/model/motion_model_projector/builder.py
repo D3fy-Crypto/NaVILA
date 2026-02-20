@@ -88,6 +88,10 @@ def _build_by_type(model_type: str, input_dim: int, hidden_dim: int, output_dim:
 
 
 def build_motion_projector(model_type_or_path: str, config: PretrainedConfig) -> Optional[nn.Module]:
+    if not getattr(config, "motion_encode", True):
+        print("[MotionProjector] motion_encode=False -> disabling motion projector.")
+        return None
+
     if model_type_or_path is None:
         return None
 

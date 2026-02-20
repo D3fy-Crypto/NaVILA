@@ -83,6 +83,8 @@ def prepare_config_for_training(
 ) -> None:
     config.chat_template = model_args.chat_template
     assert model_args.vision_tower is not None, "requires vision tower"
+    motion_encode = getattr(model_args, "motion_encode", True)
+    config.motion_encode = motion_encode
     # set module configurations
     if getattr(config, "llm_cfg", None) is None:
         config.llm_cfg = model_args.model_name_or_path
@@ -90,13 +92,18 @@ def prepare_config_for_training(
         config.vision_tower_cfg = model_args.vision_tower
     if getattr(config, "mm_projector_cfg", None) is None:
         config.mm_projector_cfg = model_args.mm_projector
-    if getattr(config, "motion_encoder_cfg", None) is None:
-        config.motion_encoder_cfg = model_args.motion_encoder
-    if getattr(config, "motion_projector_cfg", None) is None:
-        if model_args.motion_projector is not None:
-            config.motion_projector_cfg = model_args.motion_projector
-        elif model_args.motion_encoder is not None:
-            config.motion_projector_cfg = "grid2vision"
+    if motion_encode:
+        if getattr(config, "motion_encoder_cfg", None) is None:
+            config.motion_encoder_cfg = model_args.motion_encoder
+        if getattr(config, "motion_projector_cfg", None) is None:
+            if model_args.motion_projector is not None:
+                config.motion_projector_cfg = model_args.motion_projector
+            elif model_args.motion_encoder is not None:
+                config.motion_projector_cfg = "grid2vision"
+    else:
+        # Explicit hard-disable from CLI regardless of checkpoint defaults.
+        config.motion_encoder_cfg = None
+        config.motion_projector_cfg = None
     # set default dtype
     config.model_dtype = torch.bfloat16 if training_args.bf16 else torch.float16
     config.model_dtype = config.model_dtype.__str__()

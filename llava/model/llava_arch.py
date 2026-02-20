@@ -524,8 +524,10 @@ class LlavaMetaForCausalLM(ABC):
                     special_types.append("image")
                 else:
                     if not use_motions:
-                        raise ValueError("Found <motion> token but motions are not provided.")
-                    special_types.append("motion")
+                        # Motion branch is disabled (or motions absent): drop <motion> placeholder token.
+                        special_types.append(None)
+                    else:
+                        special_types.append("motion")
 
             segment_boundaries = [-1] + special_token_indices + [cur_input_ids.shape[0]]
             cur_labels_no_special = []
@@ -574,7 +576,7 @@ class LlavaMetaForCausalLM(ABC):
                             )
                         )
                         print(f"      [AUDIT] Inserted image features at segment {i}, shape: {cur_image_features.shape}")
-                    else:
+                    elif special_types[i] == "motion":
                         cur_motion_features = motion_features[cur_motion_idx]
                         cur_motion_idx += 1
                         if cur_motion_features.ndim == 1:

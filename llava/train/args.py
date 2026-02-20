@@ -54,6 +54,10 @@ class ModelArguments:
     mm_projector: Optional[str] = field(default="mlp2x_gelu")
     motion_encoder: Optional[str] = field(default="/home/rithvik/IROS_proj/NaVILA_iros/llava/model/gru_model/motion_gru_infonce.pt")
     motion_projector: Optional[str] = field(default=None)
+    motion_encode: bool = field(
+        default=True,
+        metadata={"help": "Enable motion branch. Set to False to disable motion encoder/projector entirely."},
+    )
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_layer: Optional[int] = field(default=-1)  # default to the last layer

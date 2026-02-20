@@ -82,6 +82,10 @@ def _load_state_dict(path: str) -> dict:
 
 
 def build_motion_encoder(model_path_or_name: str, config: PretrainedConfig) -> Optional[MotionGRU]:
+    if not getattr(config, "motion_encode", True):
+        print("[MotionGRU] motion_encode=False -> disabling motion encoder.")
+        return None
+
     if model_path_or_name is None:
         if os.path.exists(DEFAULT_GRU_CKPT):
             print(f"[MotionGRU] Using default checkpoint: {DEFAULT_GRU_CKPT}")
