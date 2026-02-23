@@ -545,19 +545,19 @@ class LlavaMetaForCausalLM(ABC):
             cur_new_input_embeds = []
             cur_new_labels = []
             # --- AUDIT/TRACE PRINTS ---
-            print(f"[AUDIT][Sample {batch_idx}]")
-            print(f"  Original input_ids: {cur_input_ids.tolist()}")
-            print(f"  Special token indices: {special_token_indices}")
-            print(f"  Special types: {special_types}")
-            print(f"  Segment boundaries: {segment_boundaries}")
-            seg_lens = []
-            for i in range(len(segment_boundaries) - 1):
-                seg_type = "instruction"
-                if i > 0 and i <= len(special_types):
-                    seg_type = special_types[i-1]
-                seg_len = segment_boundaries[i+1] - (segment_boundaries[i]+1)
-                seg_lens.append(seg_len)
-                print(f"    Segment {i}: {seg_type}, start={segment_boundaries[i]+1}, end={segment_boundaries[i+1]}, length={seg_len}")
+            # print(f"[AUDIT][Sample {batch_idx}]")
+            # print(f"  Original input_ids: {cur_input_ids.tolist()}")
+            # print(f"  Special token indices: {special_token_indices}")
+            # print(f"  Special types: {special_types}")
+            # print(f"  Segment boundaries: {segment_boundaries}")
+            # seg_lens = []
+            # for i in range(len(segment_boundaries) - 1):
+            #     seg_type = "instruction"
+            #     if i > 0 and i <= len(special_types):
+            #         seg_type = special_types[i-1]
+            #     seg_len = segment_boundaries[i+1] - (segment_boundaries[i]+1)
+            #     seg_lens.append(seg_len)
+            #     print(f"    Segment {i}: {seg_type}, start={segment_boundaries[i]+1}, end={segment_boundaries[i+1]}, length={seg_len}")
             # --- END AUDIT/TRACE PRINTS ---
             for i in range(len(cur_input_embeds_no_special)):
                 cur_new_input_embeds.append(cur_input_embeds_no_special[i])
@@ -575,7 +575,7 @@ class LlavaMetaForCausalLM(ABC):
                                 dtype=cur_labels.dtype,
                             )
                         )
-                        print(f"      [AUDIT] Inserted image features at segment {i}, shape: {cur_image_features.shape}")
+                        #print(f"      [AUDIT] Inserted image features at segment {i}, shape: {cur_image_features.shape}")
                     elif special_types[i] == "motion":
                         cur_motion_features = motion_features[cur_motion_idx]
                         cur_motion_idx += 1
@@ -590,13 +590,13 @@ class LlavaMetaForCausalLM(ABC):
                                 dtype=cur_labels.dtype,
                             )
                         )
-                        print(f"      [AUDIT] Inserted motion features at segment {i}, shape: {cur_motion_features.shape}")
-
+                        #print(f"      [AUDIT] Inserted motion features at segment {i}, shape: {cur_motion_features.shape}")
+    
             cur_new_input_embeds = torch.cat(cur_new_input_embeds)
             cur_new_labels = torch.cat(cur_new_labels)
 
-            print(f"  Final input_embeds length: {cur_new_input_embeds.shape[0]}")
-            print(f"  Final input_embeds shape: {cur_new_input_embeds.shape}")
+            #print(f"  Final input_embeds length: {cur_new_input_embeds.shape[0]}")
+            #print(f"  Final input_embeds shape: {cur_new_input_embeds.shape}")
 
             new_input_embeds.append(cur_new_input_embeds)
             new_labels.append(cur_new_labels)

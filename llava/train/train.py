@@ -63,6 +63,20 @@ def _summarize_positions(pos):
         return str(pos)
     return f"{pos[:10]} ... {pos[-10:]} (count={len(pos)})"
 
+
+def _env_flag_enabled(key: str, default: bool = False) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+_DATAFLOW_DEBUG_ENABLED = _env_flag_enabled(
+    "LLAVA_DEBUG_DATAFLOW",
+    default=_env_flag_enabled("LLAVA_DEBUG_MOTION", default=True),
+)
+
+
 if "WANDB_PROJECT" not in os.environ:
     # Default to WANDB project "VILA".
     os.environ["WANDB_PROJECT"] = "VILA-Long"
@@ -763,6 +777,9 @@ def train():
         GRUTrainingMonitorCallback(log_every_n_steps=grad_log_steps),
     ]
 
+    if not training_args.do_train and training_args.dpo:
+        raise ValueError("Loss-only mode (`--do_train False`) is not supported when `--dpo True`.")
+
     if training_args.dpo:
         ref_model = model_cls(
             config=config,
@@ -803,7 +820,7 @@ def train():
         len(trainer.train_dataset),
         flush=True,
     )
-    if training_args.per_device_train_batch_size == 1 and training_args.local_rank in (-1, 0):
+    if _DATAFLOW_DEBUG_ENABLED and training_args.per_device_train_batch_size == 1 and training_args.local_rank in (-1, 0):
         debug_batch = next(iter(trainer.get_train_dataloader()))
         batch_keys = list(debug_batch.keys())
         print("[DATAFLOW][train.py] sample batch keys:", batch_keys, flush=True)
@@ -846,6 +863,40 @@ def train():
         torch.cuda.memory_allocated() / 1024 / 1024 / 1024,
         flush=True,
     )
+
+    if not training_args.do_train:
+        model.eval()
+        total_loss = 0.0
+        total_tokens = 0
+        for batch in trainer.get_train_dataloader():
+            batch = trainer._prepare_inputs(batch)
+            labels = batch.get("labels")
+            if labels is None:
+                continue
+            valid_tokens = (labels != IGNORE_INDEX).sum().item()
+            if valid_tokens == 0:
+                continue
+            with torch.inference_mode():
+                if torch.cuda.is_available() and (training_args.bf16 or training_args.fp16):
+                    amp_dtype = torch.bfloat16 if training_args.bf16 else torch.float16
+                    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                        outputs = model(**batch)
+                elif hasattr(trainer, "compute_loss_context_manager"):
+                    with trainer.compute_loss_context_manager():
+                        outputs = model(**batch)
+                else:
+                    outputs = model(**batch)
+            if outputs.loss is None:
+                continue
+            total_loss += outputs.loss.detach().float().item() * valid_tokens
+            total_tokens += valid_tokens
+
+        if total_tokens == 0:
+            raise ValueError("Loss-only mode found zero valid label tokens (`labels != IGNORE_INDEX`).")
+
+        if training_args.local_rank in (-1, 0):
+            print({"base_token_loss": total_loss / total_tokens}, flush=True)
+        return
 
     # trainer.evaluate()
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)

@@ -16,6 +16,7 @@
 
 # This file is modified from https://github.com/haotian-liu/LLaVA/
 
+import os
 from abc import abstractmethod
 
 import torch
@@ -25,6 +26,19 @@ from s2wrapper import forward as multiscale_forward
 from transformers import AutoConfig, PreTrainedModel
 from transformers.image_processing_utils import BaseImageProcessor
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
+
+
+def _env_flag_enabled(key: str, default: bool = False) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+_DATAFLOW_DEBUG_ENABLED = _env_flag_enabled(
+    "LLAVA_DEBUG_DATAFLOW",
+    default=_env_flag_enabled("LLAVA_DEBUG_MOTION", default=True),
+)
 
 
 class VisionTower(nn.Module):
@@ -133,24 +147,31 @@ class VisionTower(nn.Module):
             image_features = []
             for image in images:
                 img_tensor = image.to(device=self.device, dtype=self.dtype).unsqueeze(0)
-                print(f"Input image tensor shape: {img_tensor.shape}")
+                if _DATAFLOW_DEBUG_ENABLED:
+                    print(f"Input image tensor shape: {img_tensor.shape}")
                 image_forward_out = self.vision_tower(
                     img_tensor,
                     output_hidden_states=True,
                 )
-                if hasattr(image_forward_out, 'hidden_states'):
-                    print(f"image_forward_out.hidden_states[{self.select_layer}] shape: {image_forward_out.hidden_states[self.select_layer].shape}")
+                if _DATAFLOW_DEBUG_ENABLED and hasattr(image_forward_out, "hidden_states"):
+                    print(
+                        f"image_forward_out.hidden_states[{self.select_layer}] shape: "
+                        f"{image_forward_out.hidden_states[self.select_layer].shape}"
+                    )
                 image_feature = self.feature_select(image_forward_out).to(image.dtype)
-                print(f"Selected image feature shape: {image_feature.shape}")
+                if _DATAFLOW_DEBUG_ENABLED:
+                    print(f"Selected image feature shape: {image_feature.shape}")
                 image_features.append(image_feature)
         else:
-            print(f"Input images tensor shape: {images.shape}")
+            if _DATAFLOW_DEBUG_ENABLED:
+                print(f"Input images tensor shape: {images.shape}")
             image_forward_outs = self.vision_tower(
                 images.to(device=self.device, dtype=self.dtype),
                 output_hidden_states=True,
             )
             image_features = self.feature_select(image_forward_outs).to(images.dtype)
-            print(f"Selected image feature shape: {image_features.shape}")
+            if _DATAFLOW_DEBUG_ENABLED:
+                print(f"Selected image feature shape: {image_features.shape}")
 
         return image_features
 

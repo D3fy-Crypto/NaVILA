@@ -107,9 +107,17 @@ class MultimodalProjector(PreTrainedModel):
                 raise ValueError(f"Unknown projector type: {mm_projector_type}")
 
     def forward(self, x, *args, **kwargs):
-        print(f"Input shape for mm proj: {x.shape}")
+        if x.is_floating_point() and not torch.is_autocast_enabled():
+            projector_dtype = None
+            for p in self.layers.parameters():
+                if p.is_floating_point():
+                    projector_dtype = p.dtype
+                    break
+            if projector_dtype is not None and x.dtype != projector_dtype:
+                x = x.to(dtype=projector_dtype)
+        #print(f"Input shape for mm proj: {x.shape}")
         out = self.layers(x)
-        print(f"Output shape for mm proj: {out.shape}")
+        #print(f"Output shape for mm proj: {out.shape}")
         return out
 
 

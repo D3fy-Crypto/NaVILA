@@ -86,6 +86,19 @@ _DATAFLOW_DEBUG_COLLATOR_PRINTED = False
 _POSE_DELTAS_CACHE: Dict[str, Dict[int, List[List[float]]]] = {}
 
 
+def _env_flag_enabled(key: str, default: bool = False) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+_DATAFLOW_DEBUG_ENABLED = _env_flag_enabled(
+    "LLAVA_DEBUG_DATAFLOW",
+    default=_env_flag_enabled("LLAVA_DEBUG_MOTION", default=True),
+)
+
+
 def _summarize_positions(pos):
     if len(pos) <= 20:
         return str(pos)
@@ -2451,7 +2464,7 @@ class LazyVLNCEDataset(Dataset):
             raise ValueError("No <motion> tokens found in input_ids; aborting training.")
 
         global _DATAFLOW_DEBUG_DATASET_PRINTED
-        if not _DATAFLOW_DEBUG_DATASET_PRINTED:
+        if _DATAFLOW_DEBUG_ENABLED and not _DATAFLOW_DEBUG_DATASET_PRINTED:
             worker_info = torch.utils.data.get_worker_info()
             if worker_info is None or worker_info.id == 0:
                 _DATAFLOW_DEBUG_DATASET_PRINTED = True
@@ -2618,7 +2631,7 @@ class DataCollatorForSupervisedDataset:
             batch["motions"] = torch.zeros(1, W, 4, dtype=torch.float32)
 
         global _DATAFLOW_DEBUG_COLLATOR_PRINTED
-        if not _DATAFLOW_DEBUG_COLLATOR_PRINTED and batch["input_ids"].shape[0] == 1:
+        if _DATAFLOW_DEBUG_ENABLED and not _DATAFLOW_DEBUG_COLLATOR_PRINTED and batch["input_ids"].shape[0] == 1:
             _DATAFLOW_DEBUG_COLLATOR_PRINTED = True
             ids0 = batch["input_ids"][0]
             labels0 = batch["labels"][0]
