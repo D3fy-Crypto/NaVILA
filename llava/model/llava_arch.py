@@ -154,11 +154,25 @@ class LlavaMetaModel(ABC):
         return vlm
 
     ## FIXME we will use this function to save the model in the future
-    def save_pretrained(self, output_dir, state_dict=None):
+    def save_pretrained(self, output_dir, state_dict=None, **kwargs):
         if state_dict is None:
             # other wise fetch from deepspeed
             # state_dict = accelerator.get_state_dict(is_deepspeed_enabled)
             state_dict = self.state_dict()
+
+        hf_save_kwargs = {}
+        for key in (
+            "is_main_process",
+            "save_function",
+            "push_to_hub",
+            "max_shard_size",
+            "safe_serialization",
+            "variant",
+            "token",
+            "save_peft_format",
+        ):
+            if key in kwargs:
+                hf_save_kwargs[key] = kwargs[key]
 
         needs_safetensors = self.get_motion_encoder() or self.get_motion_projector()
         safe_save_file = None
@@ -199,7 +213,11 @@ class LlavaMetaModel(ABC):
             print(f"saving llm to {osp.join(output_dir, 'llm')}")
             self.llm.config._name_or_path = osp.join(output_dir, "llm")
             llm_state_dict = OrderedDict({k.split("llm.")[-1]: v for k, v in state_dict.items() if "llm" in k})
-            self.llm.save_pretrained(os.path.join(output_dir, "llm"), state_dict=llm_state_dict)
+            self.llm.save_pretrained(
+                os.path.join(output_dir, "llm"),
+                state_dict=llm_state_dict,
+                **hf_save_kwargs,
+            )
             self.config.llm_cfg = self.llm.config
 
         if self.get_vision_tower():
@@ -215,6 +233,7 @@ class LlavaMetaModel(ABC):
             self.vision_tower.vision_tower.save_pretrained(
                 os.path.join(output_dir, "vision_tower"),
                 state_dict=vision_tower_state_dict,
+                **hf_save_kwargs,
             )
             self.vision_tower.image_processor.save_pretrained(os.path.join(output_dir, "vision_tower"))
             self.config.vision_tower_cfg = self.vision_tower.config
@@ -231,6 +250,7 @@ class LlavaMetaModel(ABC):
             self.mm_projector.save_pretrained(
                 os.path.join(output_dir, "mm_projector"),
                 state_dict=mm_projector_state_dict,
+                **hf_save_kwargs,
             )
             self.config.mm_projector_cfg = self.mm_projector.config
         if self.get_motion_encoder():

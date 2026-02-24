@@ -5,6 +5,9 @@ export GPUS_PER_NODE=1
 export n_node=1
 export MASTER_ADDR=127.0.0.1
 export CURRENT_RANK=0
+DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-0}
+TUNE_LANGUAGE_MODEL=${TUNE_LANGUAGE_MODEL:-False}
+MODEL_MAX_LENGTH=${MODEL_MAX_LENGTH:-2048}
 #nohup bash [sft_8frames_launchjson.sh](http://_vscodecontentref_/0) > [train.log](http://_vscodecontentref_/1) 2>&1 &
 OUTPUT="./checkpoints/navila-8b-8f-sft_motion_alligned"
 
@@ -26,7 +29,7 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --motion_alignment_debug_max_prints 0 \
     --tune_vision_tower False \
     --tune_mm_projector False \
-    --tune_language_model True \
+    --tune_language_model $TUNE_LANGUAGE_MODEL \
     --tune_motion_gru False \
     --tune_motion_projector True \
     --mm_vision_select_layer -2 \
@@ -38,6 +41,7 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --num_train_epochs 0.02 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 10 \
+    --do_train True \
     --do_eval False \
     --save_strategy steps \
     --save_steps 100 \
@@ -49,8 +53,8 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --lr_scheduler_type cosine \
     --logging_steps 1 \
     --tf32 True \
-    --model_max_length 4096 \
+    --model_max_length $MODEL_MAX_LENGTH \
     --gradient_checkpointing True \
-    --dataloader_num_workers 8 \
+    --dataloader_num_workers $DATALOADER_NUM_WORKERS \
     --lazy_preprocess True \
     --report_to wandb
