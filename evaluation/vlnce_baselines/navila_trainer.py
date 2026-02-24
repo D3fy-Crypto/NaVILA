@@ -572,22 +572,35 @@ class NaVILATrainer(BaseVLNCETrainer):
                         len(queue_actions),
                     )
 
-                else:  # 0, stop
+                else:  # 0, stop or parse-none
+                    queued_added = 0
                     if actions[0] is None:
                         logger.warning(
-                            "[NaVILA eval][fallback] ep=%s step=%s reason=action_parse_none value=None",
+                            '[NaVILA eval][output_none] ep=%s step=%s text="%s" -> forcing STOP and moving to next episode',
                             current_ep_id,
                             step_idx,
+                            outputs_sanitized,
                         )
-                    outputs = envs.step(actions)
-                    logger.info(
-                        "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
-                        current_ep_id,
-                        step_idx,
-                        actions[0],
-                        0,
-                        len(queue_actions),
-                    )
+                        forced_action = 0
+                        outputs = envs.step([forced_action])
+                        logger.info(
+                            "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s reason=output_none",
+                            current_ep_id,
+                            step_idx,
+                            forced_action,
+                            queued_added,
+                            len(queue_actions),
+                        )
+                    else:
+                        outputs = envs.step(actions)
+                        logger.info(
+                            "[NaVILA eval][dispatch] ep=%s step=%s base_action=%s queued=%s queue_len=%s",
+                            current_ep_id,
+                            step_idx,
+                            actions[0],
+                            queued_added,
+                            len(queue_actions),
+                        )
 
             observations, _, dones, infos = [list(x) for x in zip(*outputs)]
 
