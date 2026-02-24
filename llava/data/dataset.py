@@ -43,7 +43,7 @@ import re
 import time
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import PIL
@@ -83,6 +83,7 @@ PIL.Image.MAX_IMAGE_PIXELS = 1000000000
 
 _DATAFLOW_DEBUG_DATASET_PRINTED = False
 _DATAFLOW_DEBUG_COLLATOR_PRINTED = False
+_MOTION_ALIGNMENT_DEBUG_PRINTED = 0
 _POSE_DELTAS_CACHE: Dict[str, Dict[int, List[List[float]]]] = {}
 
 
@@ -141,23 +142,86 @@ def _vlnce_sample_indices(total_frames: int, num_frames: int) -> List[int]:
     return [max(0, idx - padded) for idx in sampled]
 
 
-def _load_pose_deltas_dir(pose_deltas_dir: Optional[str]) -> Dict[int, List[List[float]]]:
+def _parse_frame_id(frame_relpath: str) -> int:
+    match = re.search(r"frame_(\d+)\.[^.]+$", frame_relpath)
+    if match is None:
+        raise ValueError(f"Could not parse frame id from path: {frame_relpath}")
+    return int(match.group(1))
+
+
+def _aggregate_pose_deltas_for_sampled_frames(
+    all_deltas: Sequence[Sequence[float]],
+    sampled_frame_ids: Sequence[int],
+) -> Tuple[List[Tuple[float, float, float]], List[str]]:
+    pose_deltas_step: List[Tuple[float, float, float]] = []
+    segment_descriptions: List[str] = ["token 0: ZERO"]
+    total_steps = len(all_deltas)
+    for token_idx in range(1, len(sampled_frame_ids)):
+        prev_frame = int(sampled_frame_ids[token_idx - 1])
+        curr_frame = int(sampled_frame_ids[token_idx])
+        if curr_frame <= prev_frame:
+            pose_deltas_step.append((0.0, 0.0, 0.0))
+            segment_descriptions.append(
+                f"token {token_idx}: prev={prev_frame}, curr={curr_frame} -> ZERO (non-increasing or repeated frame)"
+            )
+            continue
+
+        start = max(0, prev_frame)
+        end = max(0, curr_frame)
+        clipped_start = min(start, total_steps)
+        clipped_end = min(end, total_steps)
+
+        dx = dy = dyaw = 0.0
+        for k in range(clipped_start, clipped_end):
+            d = all_deltas[k]
+            dx += float(d[0])
+            dy += float(d[1])
+            dyaw += float(d[2])
+        pose_deltas_step.append((dx, dy, dyaw))
+
+        if clipped_end > clipped_start:
+            frame_range = f"{prev_frame + 1}..{curr_frame}"
+            delta_range = f"[{clipped_start}, {clipped_end})"
+            segment_descriptions.append(
+                f"token {token_idx}: prev={prev_frame}, curr={curr_frame}, frame_ids={frame_range}, delta_idx={delta_range}"
+            )
+        else:
+            segment_descriptions.append(
+                f"token {token_idx}: prev={prev_frame}, curr={curr_frame}, frame_ids=NONE, delta_idx=EMPTY -> ZERO"
+            )
+
+    return pose_deltas_step, segment_descriptions
+
+
+def _pose_deltas_cache_key(pose_deltas_dir: str, filenames: Sequence[str]) -> str:
+    return f"{pose_deltas_dir}::{'|'.join(filenames)}"
+
+
+def _load_pose_deltas_dir(
+    pose_deltas_dir: Optional[str],
+    filenames: Optional[Sequence[str]] = None,
+) -> Dict[int, List[List[float]]]:
     if not pose_deltas_dir:
         return {}
-    if pose_deltas_dir in _POSE_DELTAS_CACHE:
-        return _POSE_DELTAS_CACHE[pose_deltas_dir]
+    files_to_load = tuple(
+        filenames
+        if filenames is not None
+        else (
+            "oracle_deltas_train.jsonl",
+            "oracle_deltas_val_seen.jsonl",
+            "oracle_deltas_val_unseen.jsonl",
+        )
+    )
+    cache_key = _pose_deltas_cache_key(pose_deltas_dir, files_to_load)
+    if cache_key in _POSE_DELTAS_CACHE:
+        return _POSE_DELTAS_CACHE[cache_key]
     if not os.path.isdir(pose_deltas_dir):
         print(f"[PoseDeltas] directory not found: {pose_deltas_dir}")
-        _POSE_DELTAS_CACHE[pose_deltas_dir] = {}
+        _POSE_DELTAS_CACHE[cache_key] = {}
         return {}
     cache: Dict[int, List[List[float]]] = {}
-    filenames = [
-        "oracle_deltas_train.jsonl",
-        "oracle_deltas_val_seen.jsonl",
-        "oracle_deltas_val_unseen.jsonl",
-    ]
     loaded = 0
-    for fname in filenames:
+    for fname in files_to_load:
         fpath = os.path.join(pose_deltas_dir, fname)
         if not os.path.exists(fpath):
             continue
@@ -176,8 +240,11 @@ def _load_pose_deltas_dir(pose_deltas_dir: Optional[str]) -> Dict[int, List[List
                     continue
                 cache[int(episode_id)] = deltas
                 loaded += 1
-    print(f"[PoseDeltas] loaded {loaded} episodes from {pose_deltas_dir}")
-    _POSE_DELTAS_CACHE[pose_deltas_dir] = cache
+    print(
+        f"[PoseDeltas] loaded {loaded} entries from {pose_deltas_dir} "
+        f"(files={','.join(files_to_load)})"
+    )
+    _POSE_DELTAS_CACHE[cache_key] = cache
     return cache
 
 # def preprocess_multimodal is not getting called in the current class used for r2r dataset, which is LazyVLNCEDataset class.
@@ -2305,6 +2372,13 @@ class LazyVLNCEDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
+        pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
+        self.delta_cache = _load_pose_deltas_dir(
+            pose_deltas_dir,
+            filenames=("oracle_deltas_train.jsonl",),
+        )
+        if pose_deltas_dir and len(self.delta_cache) == 0:
+            raise ValueError(f"Pose deltas not found or empty: {pose_deltas_dir}")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -2328,16 +2402,20 @@ class LazyVLNCEDataset(Dataset):
 
     @staticmethod
     def _load_video(video_paths, num_video_frames, data_args):
-        from llava.mm_utils import vlnce_frame_sampling
-
         video_loading_succeed = True
         try:
-            pil_imgs = vlnce_frame_sampling(video_paths, num_video_frames)
+            pil_imgs = [Image.open(path).convert("RGB") for path in video_paths]
 
         except Exception as e:
             video_loading_succeed = False
             print(f"[Error] bad data paths {video_paths}: {e}")
             pil_imgs = [Image.new("RGB", (448, 448), (0, 0, 0))] * num_video_frames
+
+        if len(pil_imgs) != num_video_frames:
+            if len(pil_imgs) < num_video_frames:
+                pil_imgs = pil_imgs + [Image.new("RGB", (448, 448), (0, 0, 0))] * (num_video_frames - len(pil_imgs))
+            else:
+                pil_imgs = pil_imgs[:num_video_frames]
 
         return pil_imgs, video_loading_succeed
 
@@ -2349,9 +2427,12 @@ class LazyVLNCEDataset(Dataset):
         if ("frames" in sources[0]) and ("video_id" in sources[0]):
             num_video_frames = self.data_args.num_video_frames
             frames = sources[0]["frames"]
+            video_id = sources[0]["video_id"]
             video_folder = self.image_folder
-            video_paths = [os.path.join(video_folder, frame) for frame in frames]
             indices_to_sample = _vlnce_sample_indices(len(frames), num_video_frames)
+            sampled_frames = [frames[idx] for idx in indices_to_sample]
+            sampled_frame_ids = [_parse_frame_id(frame_path) for frame_path in sampled_frames]
+            video_paths = [os.path.join(video_folder, frame) for frame in sampled_frames]
 
             images, video_loading_succeed = self._load_video(video_paths, num_video_frames, self.data_args)
             num_frames_loaded_successfully = len(images)
@@ -2363,13 +2444,10 @@ class LazyVLNCEDataset(Dataset):
             instruction = re.sub(r"\s+\.", ".", instruction)
             answer = sources[0]["a"]
             # Build per-transition deltas aligned to sampled frames
-            if not hasattr(self, "delta_cache"):
-                pose_deltas_dir = getattr(self.data_args, "pose_deltas_dir", None)
-                self.delta_cache = _load_pose_deltas_dir(pose_deltas_dir)
             episode_id = None
             all_deltas = None
             try:
-                episode_id = int(sources[0]["video_id"].split("-")[0])  # "914-23" -> 914
+                episode_id = int(video_id.split("-")[0])  # "914-23" -> 914
                 all_deltas = self.delta_cache.get(episode_id)
             except Exception:
                 all_deltas = None
@@ -2381,25 +2459,28 @@ class LazyVLNCEDataset(Dataset):
                 )
 
             T = num_frames_loaded_successfully
-            pose_deltas_step = []
+            segment_descriptions = ["token 0: ZERO"]
             if video_loading_succeed:
-                for j in range(1, len(indices_to_sample)):
-                    prev_idx = indices_to_sample[j - 1]
-                    curr_idx = indices_to_sample[j]
-                    dx = dy = dyaw = 0.0
-                    max_k = min(curr_idx, len(all_deltas))
-                    for k in range(prev_idx, max_k):
-                        d = all_deltas[k]
-                        dx += float(d[0])
-                        dy += float(d[1])
-                        dyaw += float(d[2])
-                    pose_deltas_step.append((dx, dy, dyaw))
-                if len(pose_deltas_step) != T - 1:
-                    pose_deltas_step = pose_deltas_step[: T - 1] + [(0.0, 0.0, 0.0)] * max(
-                        0, (T - 1) - len(pose_deltas_step)
-                    )
+                pose_deltas_step, segment_descriptions = _aggregate_pose_deltas_for_sampled_frames(
+                    all_deltas=all_deltas,
+                    sampled_frame_ids=sampled_frame_ids,
+                )
             else:
                 pose_deltas_step = [(0.0, 0.0, 0.0)] * max(0, T - 1)
+                segment_descriptions = ["token 0: ZERO"] + [
+                    f"token {t}: ZERO (video load failed)" for t in range(1, T)
+                ]
+
+            expected_steps = max(0, T - 1)
+            if len(pose_deltas_step) > expected_steps:
+                pose_deltas_step = pose_deltas_step[:expected_steps]
+                segment_descriptions = segment_descriptions[: expected_steps + 1]
+            elif len(pose_deltas_step) < expected_steps:
+                pad_count = expected_steps - len(pose_deltas_step)
+                pose_deltas_step = pose_deltas_step + [(0.0, 0.0, 0.0)] * pad_count
+                segment_descriptions.extend(
+                    [f"token {len(segment_descriptions) + j}: PAD_ZERO" for j in range(pad_count)]
+                )
 
             motion_tensor = _make_motion_windows(
                 pose_deltas_step=pose_deltas_step,
@@ -2407,6 +2488,26 @@ class LazyVLNCEDataset(Dataset):
                 window_size=getattr(self.data_args, "motion_window_size", 10),
                 trans_norm=getattr(self.data_args, "motion_trans_norm", 0.25),
             )
+
+            global _MOTION_ALIGNMENT_DEBUG_PRINTED
+            if getattr(self.data_args, "motion_alignment_debug", False):
+                max_prints = max(0, int(getattr(self.data_args, "motion_alignment_debug_max_prints", 1)))
+                if _MOTION_ALIGNMENT_DEBUG_PRINTED < max_prints:
+                    _MOTION_ALIGNMENT_DEBUG_PRINTED += 1
+                    print("[MOTION_ALIGN] video_id:", video_id, flush=True)
+                    print("[MOTION_ALIGN] num_video_frames:", num_video_frames, flush=True)
+                    print("[MOTION_ALIGN] total_frames_in_sample:", len(frames), flush=True)
+                    print("[MOTION_ALIGN] sampled_indices:", indices_to_sample, flush=True)
+                    print("[MOTION_ALIGN] sampled_frame_ids:", sampled_frame_ids, flush=True)
+                    print(
+                        "[MOTION_ALIGN] last_sampled_frame_id:",
+                        (sampled_frame_ids[-1] if len(sampled_frame_ids) > 0 else None),
+                        flush=True,
+                    )
+                    print("[MOTION_ALIGN] delta_len:", len(all_deltas), flush=True)
+                    print("[MOTION_ALIGN] segment_ranges:", segment_descriptions, flush=True)
+                    print("[MOTION_ALIGN] pose_deltas_step_len:", len(pose_deltas_step), flush=True)
+                    print("[MOTION_ALIGN] motion_tensor_shape:", tuple(motion_tensor.shape), flush=True)
 
             hist_pairs = (DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n") * max(0, T - 1)
             cur_pair = DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n"

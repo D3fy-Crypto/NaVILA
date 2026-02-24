@@ -43,7 +43,7 @@ class GridToVisionProjector(nn.Module):
         )
 
     def forward(self, motion_embeddings: torch.Tensor) -> torch.Tensor:
-        print(f"Input shape for motion proj: {motion_embeddings.shape}")
+        #print(f"Input shape for motion proj: {motion_embeddings.shape}")
         output = self.layers(motion_embeddings)
-        print(f"Output shape for motion proj: {output.shape}")
+        #print(f"Output shape for motion proj: {output.shape}")
         return output

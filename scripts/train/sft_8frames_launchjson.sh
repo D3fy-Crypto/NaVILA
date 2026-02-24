@@ -1,8 +1,15 @@
 #!/bin/bash
 # nohup bash /home/rithvik/IROS_proj/NaVILA_iros/scripts/train/sft_8frames_launchjson.sh > train.log 2>&1 &
-OUTPUT="./checkpoints/navila-8b-8f-sft"
+export MASTER_PORT=29501
+export GPUS_PER_NODE=1
+export n_node=1
+export MASTER_ADDR=127.0.0.1
+export CURRENT_RANK=0
+#nohup bash [sft_8frames_launchjson.sh](http://_vscodecontentref_/0) > [train.log](http://_vscodecontentref_/1) 2>&1 &
+OUTPUT="./checkpoints/navila-8b-8f-sft_motion_alligned"
 
-LLAVA_DEBUG_MOTION=1 \
+
+LLAVA_DEBUG_MOTION=0 \
 torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_PORT \
     --master_addr $MASTER_ADDR --node_rank=$CURRENT_RANK \
     llava/train/train_mem.py \
@@ -15,6 +22,8 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --mm_vision_select_feature cls_patch \
     --mm_projector mlp_downsample \
     --num_video_frames 8 \
+    --motion_alignment_debug False \
+    --motion_alignment_debug_max_prints 0 \
     --tune_vision_tower False \
     --tune_mm_projector False \
     --tune_language_model True \

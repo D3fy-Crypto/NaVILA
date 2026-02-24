@@ -39,6 +39,14 @@ class DataArguments:
     )
     motion_window_size: int = 10
     motion_trans_norm: float = 0.25
+    motion_alignment_debug: bool = field(
+        default=False,
+        metadata={"help": "Print sampled-frame to motion alignment details for VLNCE samples."},
+    )
+    motion_alignment_debug_max_prints: int = field(
+        default=1,
+        metadata={"help": "Maximum number of VLNCE alignment debug prints per process."},
+    )
 
     # for video training
     num_video_frames: int = 8
