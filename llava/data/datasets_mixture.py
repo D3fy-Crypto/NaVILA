@@ -99,7 +99,7 @@ def register_datasets_mixtures():
     r2r = Dataset(
         dataset_name="r2r",
         dataset_type="vlnce",
-        data_path="/home/rithvik/IROS_proj/NaVILA-Dataset/R2R/annotations.json",
+        data_path="/home/rithvik/IROS_proj/NaVILA-Dataset/R2R/pose_deltas/train_r2r_img_motion_8colsq_segmented.json",
         image_path="/home/rithvik/IROS_proj/NaVILA-Dataset/R2R/train",
         description="350K VLN-CE R2R data. (augmented aith duplicate samples)",
     )

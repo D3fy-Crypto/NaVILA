@@ -35,10 +35,22 @@ class DataArguments:
     navila_video_sampler_v2: bool = False
     pose_deltas_dir: Optional[str] = field(
         default="/home/rithvik/IROS_proj/NaVILA-Dataset/R2R/pose_deltas",
-        metadata={"help": "Directory containing oracle_deltas_*.jsonl files."},
+        metadata={"help": "Directory containing oracle_deltas_*.jsonl files (used for VLNCE pose_deltas mode)."},
+    )
+    vlnce_motion_source: str = field(
+        default="auto",
+        metadata={"help": "Motion source for VLNCE dataset: auto|pose_deltas|json_actions."},
     )
     motion_window_size: int = 10
     motion_trans_norm: float = 0.25
+    motion_action_forward_m: float = field(
+        default=0.25,
+        metadata={"help": "Forward distance (meters) used when converting action id=1 to dx/dy in JSON action mode."},
+    )
+    motion_action_turn_deg: float = field(
+        default=15.0,
+        metadata={"help": "Turn angle (degrees) used when converting action id=2/3 to dyaw in JSON action mode."},
+    )
     motion_alignment_debug: bool = field(
         default=False,
         metadata={"help": "Print sampled-frame to motion alignment details for VLNCE samples."},

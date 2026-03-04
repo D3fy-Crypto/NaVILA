@@ -142,6 +142,139 @@ def _vlnce_sample_indices(total_frames: int, num_frames: int) -> List[int]:
     return [max(0, idx - padded) for idx in sampled]
 
 
+def _is_json_motion_sample(sample: Dict[str, Any]) -> bool:
+    if not isinstance(sample, dict):
+        return False
+    if "img_8_indices" not in sample:
+        return False
+    return all(f"motion_{idx}" in sample for idx in range(1, 9))
+
+
+def _parse_img_slots(sample: Dict[str, Any], num_slots: int) -> List[Optional[int]]:
+    raw_slots = sample.get("img_8_indices", [])
+    if not isinstance(raw_slots, list):
+        raw_slots = []
+
+    slots: List[Optional[int]] = []
+    for idx in range(num_slots):
+        value = raw_slots[idx] if idx < len(raw_slots) else "x"
+        if isinstance(value, (int, np.integer)):
+            slots.append(int(value))
+            continue
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped in {"", "x"}:
+                slots.append(None)
+                continue
+            try:
+                slots.append(int(stripped))
+            except Exception:
+                slots.append(None)
+            continue
+        slots.append(None)
+    return slots
+
+
+def _parse_motion_slot(value: Any) -> Tuple[Optional[List[int]], str]:
+    if isinstance(value, list):
+        actions: List[int] = []
+        for item in value:
+            if isinstance(item, (int, np.integer)):
+                actions.append(int(item))
+            elif isinstance(item, str):
+                stripped = item.strip().lower()
+                if stripped in {"", "x"}:
+                    continue
+                try:
+                    actions.append(int(stripped))
+                except Exception:
+                    continue
+        return actions, "list"
+
+    if isinstance(value, (int, np.integer)):
+        return [int(value)], "int"
+
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if stripped in {"", "x"}:
+            return None, "x"
+        try:
+            return [int(stripped)], "str_int"
+        except Exception:
+            return None, "str_other"
+
+    if value is None:
+        return None, "none"
+    return None, type(value).__name__
+
+
+def _actions_to_delta(
+    actions: Sequence[int],
+    heading: float,
+    forward_step_m: float = 0.25,
+    turn_deg: float = 15.0,
+) -> Tuple[float, float, float, float]:
+    dx = 0.0
+    dy = 0.0
+    dyaw = 0.0
+    cur_heading = float(heading)
+    turn_rad = math.radians(float(turn_deg))
+    for action in actions:
+        if int(action) == 1:
+            dx += float(forward_step_m) * math.cos(cur_heading)
+            dy += float(forward_step_m) * math.sin(cur_heading)
+        elif int(action) == 2:
+            cur_heading += turn_rad
+            dyaw += turn_rad
+        elif int(action) == 3:
+            cur_heading -= turn_rad
+            dyaw -= turn_rad
+        elif int(action) == 0:
+            continue
+    return dx, dy, dyaw, cur_heading
+
+
+def _build_pose_deltas_from_json_motion(
+    sample: Dict[str, Any],
+    num_frames: int,
+    forward_step_m: float = 0.25,
+    turn_deg: float = 15.0,
+) -> Tuple[List[Tuple[float, float, float]], List[str], List[str]]:
+    parsed_slots: List[Optional[List[int]]] = []
+    motion_slot_types: List[str] = []
+    for slot_idx in range(1, num_frames + 1):
+        raw_value = sample.get(f"motion_{slot_idx}", "x")
+        parsed, slot_type = _parse_motion_slot(raw_value)
+        parsed_slots.append(parsed)
+        motion_slot_types.append(slot_type)
+
+    pose_deltas_step: List[Tuple[float, float, float]] = []
+    segment_descriptions: List[str] = ["token 0: ZERO"]
+    heading = 0.0
+
+    for token_idx in range(1, num_frames):
+        actions = parsed_slots[token_idx]  # motion_{token_idx + 1}
+        slot_type = motion_slot_types[token_idx]
+        field_name = f"motion_{token_idx + 1}"
+        if actions is None:
+            pose_deltas_step.append((0.0, 0.0, 0.0))
+            segment_descriptions.append(f"token {token_idx}: {field_name} type={slot_type} -> ZERO")
+            continue
+
+        dx, dy, dyaw, heading = _actions_to_delta(
+            actions,
+            heading=heading,
+            forward_step_m=forward_step_m,
+            turn_deg=turn_deg,
+        )
+        pose_deltas_step.append((dx, dy, dyaw))
+        segment_descriptions.append(
+            f"token {token_idx}: {field_name} type={slot_type}, num_actions={len(actions)}"
+        )
+
+    return pose_deltas_step, segment_descriptions, motion_slot_types
+
+
 def _parse_frame_id(frame_relpath: str) -> int:
     match = re.search(r"frame_(\d+)\.[^.]+$", frame_relpath)
     if match is None:
@@ -2372,13 +2505,15 @@ class LazyVLNCEDataset(Dataset):
         self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.image_folder = image_folder
-        pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
-        self.delta_cache = _load_pose_deltas_dir(
-            pose_deltas_dir,
-            filenames=("oracle_deltas_train.jsonl",),
-        )
-        if pose_deltas_dir and len(self.delta_cache) == 0:
-            raise ValueError(f"Pose deltas not found or empty: {pose_deltas_dir}")
+        self.pose_deltas_dir = getattr(data_args, "pose_deltas_dir", None)
+        self.delta_cache: Optional[Dict[int, List[List[float]]]] = None
+        self._delta_cache_loaded = False
+        self.vlnce_motion_source = str(getattr(data_args, "vlnce_motion_source", "auto")).strip().lower()
+        if self.vlnce_motion_source not in {"auto", "pose_deltas", "json_actions"}:
+            raise ValueError(
+                "Invalid `vlnce_motion_source` value: "
+                f"{self.vlnce_motion_source}. Expected one of auto|pose_deltas|json_actions."
+            )
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -2400,6 +2535,17 @@ class LazyVLNCEDataset(Dataset):
             length_list.append(cur_len)
         return length_list
 
+    def _ensure_delta_cache_loaded(self):
+        if self._delta_cache_loaded:
+            return
+        self._delta_cache_loaded = True
+        self.delta_cache = _load_pose_deltas_dir(
+            self.pose_deltas_dir,
+            filenames=("oracle_deltas_train.jsonl",),
+        )
+        if self.pose_deltas_dir and len(self.delta_cache) == 0:
+            raise ValueError(f"Pose deltas not found or empty: {self.pose_deltas_dir}")
+
     @staticmethod
     def _load_video(video_paths, num_video_frames, data_args):
         video_loading_succeed = True
@@ -2419,6 +2565,44 @@ class LazyVLNCEDataset(Dataset):
 
         return pil_imgs, video_loading_succeed
 
+    @staticmethod
+    def _load_video_slots(slot_frame_paths: Sequence[Optional[str]], num_video_frames: int):
+        pil_imgs: List[Image.Image] = []
+        valid_slot_mask: List[bool] = []
+        frame_ids: List[Optional[int]] = []
+        video_loading_succeed = True
+
+        for frame_path in slot_frame_paths[:num_video_frames]:
+            if frame_path is None:
+                pil_imgs.append(Image.new("RGB", (448, 448), (0, 0, 0)))
+                valid_slot_mask.append(False)
+                frame_ids.append(None)
+                continue
+
+            try:
+                image = Image.open(frame_path).convert("RGB")
+                pil_imgs.append(image)
+                valid_slot_mask.append(True)
+                frame_ids.append(_parse_frame_id(os.path.basename(frame_path)))
+            except Exception as e:
+                video_loading_succeed = False
+                print(f"[Error] bad data path {frame_path}: {e}")
+                pil_imgs.append(Image.new("RGB", (448, 448), (0, 0, 0)))
+                valid_slot_mask.append(False)
+                frame_ids.append(None)
+
+        if len(pil_imgs) < num_video_frames:
+            pad_count = num_video_frames - len(pil_imgs)
+            pil_imgs.extend([Image.new("RGB", (448, 448), (0, 0, 0))] * pad_count)
+            valid_slot_mask.extend([False] * pad_count)
+            frame_ids.extend([None] * pad_count)
+        elif len(pil_imgs) > num_video_frames:
+            pil_imgs = pil_imgs[:num_video_frames]
+            valid_slot_mask = valid_slot_mask[:num_video_frames]
+            frame_ids = frame_ids[:num_video_frames]
+
+        return pil_imgs, video_loading_succeed, valid_slot_mask, frame_ids
+
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         sources = self.list_data_dict[i]
         if isinstance(i, int):
@@ -2429,12 +2613,47 @@ class LazyVLNCEDataset(Dataset):
             frames = sources[0]["frames"]
             video_id = sources[0]["video_id"]
             video_folder = self.image_folder
-            indices_to_sample = _vlnce_sample_indices(len(frames), num_video_frames)
-            sampled_frames = [frames[idx] for idx in indices_to_sample]
-            sampled_frame_ids = [_parse_frame_id(frame_path) for frame_path in sampled_frames]
-            video_paths = [os.path.join(video_folder, frame) for frame in sampled_frames]
+            has_json_motion = _is_json_motion_sample(sources[0])
+            if self.vlnce_motion_source == "auto":
+                use_json_motion = has_json_motion
+            elif self.vlnce_motion_source == "json_actions":
+                if not has_json_motion:
+                    raise ValueError(
+                        f"`vlnce_motion_source=json_actions` but sample missing JSON motion fields: video_id={video_id}"
+                    )
+                use_json_motion = True
+            else:
+                use_json_motion = False
 
-            images, video_loading_succeed = self._load_video(video_paths, num_video_frames, self.data_args)
+            motion_source_used = "json_actions" if use_json_motion else "pose_deltas"
+            raw_img_8_indices = sources[0].get("img_8_indices", None) if has_json_motion else None
+            motion_slot_types: Optional[List[str]] = None
+            all_deltas = None
+
+            if use_json_motion:
+                indices_to_sample = _parse_img_slots(sources[0], num_video_frames)
+                sampled_frames: List[Optional[str]] = []
+                slot_frame_paths: List[Optional[str]] = []
+                for slot_idx in indices_to_sample:
+                    if slot_idx is None or slot_idx < 0 or slot_idx >= len(frames):
+                        sampled_frames.append(None)
+                        slot_frame_paths.append(None)
+                    else:
+                        frame_relpath = frames[slot_idx]
+                        sampled_frames.append(frame_relpath)
+                        slot_frame_paths.append(os.path.join(video_folder, frame_relpath))
+                images, video_loading_succeed, valid_slot_mask, sampled_frame_ids = self._load_video_slots(
+                    slot_frame_paths,
+                    num_video_frames=num_video_frames,
+                )
+            else:
+                indices_to_sample = _vlnce_sample_indices(len(frames), num_video_frames)
+                sampled_frames = [frames[idx] for idx in indices_to_sample]
+                sampled_frame_ids = [_parse_frame_id(frame_path) for frame_path in sampled_frames]
+                video_paths = [os.path.join(video_folder, frame) for frame in sampled_frames]
+                images, video_loading_succeed = self._load_video(video_paths, num_video_frames, self.data_args)
+                valid_slot_mask = [True] * len(images)
+
             num_frames_loaded_successfully = len(images)
             image_tensor = torch.stack([process_image(image, self.data_args, None) for image in images])
 
@@ -2444,32 +2663,40 @@ class LazyVLNCEDataset(Dataset):
             instruction = re.sub(r"\s+\.", ".", instruction)
             answer = sources[0]["a"]
             # Build per-transition deltas aligned to sampled frames
-            episode_id = None
-            all_deltas = None
-            try:
-                episode_id = int(video_id.split("-")[0])  # "914-23" -> 914
-                all_deltas = self.delta_cache.get(episode_id)
-            except Exception:
-                all_deltas = None
-
-            if all_deltas is None:
-                raise ValueError(
-                    f"Pose deltas missing for episode_id={episode_id}. "
-                    f"Check pose_deltas_dir={getattr(self.data_args, 'pose_deltas_dir', None)}"
-                )
-
             T = num_frames_loaded_successfully
             segment_descriptions = ["token 0: ZERO"]
-            if video_loading_succeed:
-                pose_deltas_step, segment_descriptions = _aggregate_pose_deltas_for_sampled_frames(
-                    all_deltas=all_deltas,
-                    sampled_frame_ids=sampled_frame_ids,
+            if use_json_motion:
+                pose_deltas_step, segment_descriptions, motion_slot_types = _build_pose_deltas_from_json_motion(
+                    sample=sources[0],
+                    num_frames=T,
+                    forward_step_m=float(getattr(self.data_args, "motion_action_forward_m", 0.25)),
+                    turn_deg=float(getattr(self.data_args, "motion_action_turn_deg", 15.0)),
                 )
             else:
-                pose_deltas_step = [(0.0, 0.0, 0.0)] * max(0, T - 1)
-                segment_descriptions = ["token 0: ZERO"] + [
-                    f"token {t}: ZERO (video load failed)" for t in range(1, T)
-                ]
+                episode_id = None
+                try:
+                    self._ensure_delta_cache_loaded()
+                    episode_id = int(video_id.split("-")[0])  # "914-23" -> 914
+                    all_deltas = (self.delta_cache or {}).get(episode_id)
+                except Exception:
+                    all_deltas = None
+
+                if all_deltas is None:
+                    raise ValueError(
+                        f"Pose deltas missing for episode_id={episode_id}. "
+                        f"Check pose_deltas_dir={getattr(self.data_args, 'pose_deltas_dir', None)}"
+                    )
+
+                if video_loading_succeed:
+                    pose_deltas_step, segment_descriptions = _aggregate_pose_deltas_for_sampled_frames(
+                        all_deltas=all_deltas,
+                        sampled_frame_ids=[frame_id if frame_id is not None else 0 for frame_id in sampled_frame_ids],
+                    )
+                else:
+                    pose_deltas_step = [(0.0, 0.0, 0.0)] * max(0, T - 1)
+                    segment_descriptions = ["token 0: ZERO"] + [
+                        f"token {t}: ZERO (video load failed)" for t in range(1, T)
+                    ]
 
             expected_steps = max(0, T - 1)
             if len(pose_deltas_step) > expected_steps:
@@ -2497,6 +2724,7 @@ class LazyVLNCEDataset(Dataset):
                     print("[MOTION_ALIGN] video_id:", video_id, flush=True)
                     print("[MOTION_ALIGN] num_video_frames:", num_video_frames, flush=True)
                     print("[MOTION_ALIGN] total_frames_in_sample:", len(frames), flush=True)
+                    print("[MOTION_ALIGN] motion_source:", motion_source_used, flush=True)
                     print("[MOTION_ALIGN] sampled_indices:", indices_to_sample, flush=True)
                     print("[MOTION_ALIGN] sampled_frame_ids:", sampled_frame_ids, flush=True)
                     print(
@@ -2504,10 +2732,27 @@ class LazyVLNCEDataset(Dataset):
                         (sampled_frame_ids[-1] if len(sampled_frame_ids) > 0 else None),
                         flush=True,
                     )
-                    print("[MOTION_ALIGN] delta_len:", len(all_deltas), flush=True)
+                    if all_deltas is not None:
+                        print("[MOTION_ALIGN] delta_len:", len(all_deltas), flush=True)
+                    if raw_img_8_indices is not None:
+                        print("[MOTION_ALIGN] raw_img_8_indices:", raw_img_8_indices, flush=True)
+                    print("[MOTION_ALIGN] valid_slot_mask:", valid_slot_mask, flush=True)
+                    if use_json_motion:
+                        raw_motion_slots = [sources[0].get(f"motion_{idx}", "x") for idx in range(1, num_video_frames + 1)]
+                        print("[MOTION_ALIGN] raw_motion_slots:", raw_motion_slots, flush=True)
+                    if motion_slot_types is not None:
+                        print("[MOTION_ALIGN] motion_slot_types:", motion_slot_types, flush=True)
                     print("[MOTION_ALIGN] segment_ranges:", segment_descriptions, flush=True)
                     print("[MOTION_ALIGN] pose_deltas_step_len:", len(pose_deltas_step), flush=True)
+                    print("[MOTION_ALIGN] pose_deltas_step_values:", pose_deltas_step, flush=True)
                     print("[MOTION_ALIGN] motion_tensor_shape:", tuple(motion_tensor.shape), flush=True)
+                    preview_tokens = min(2, motion_tensor.shape[0])
+                    if preview_tokens > 0:
+                        print(
+                            "[MOTION_ALIGN] motion_tensor_preview_first_tokens:",
+                            motion_tensor[:preview_tokens].detach().cpu().tolist(),
+                            flush=True,
+                        )
 
             hist_pairs = (DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n") * max(0, T - 1)
             cur_pair = DEFAULT_MOTION_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN + "\n"
@@ -2610,6 +2855,12 @@ class LazyVLNCEDataset(Dataset):
                 )
                 print("[DATAFLOW][LazyVLNCEDataset] image tensor shape:", img_shape, flush=True)
                 print("[DATAFLOW][LazyVLNCEDataset] motion tensor shape:", mot_shape, flush=True)
+                if torch.is_tensor(motions) and motions.ndim == 3 and motions.shape[0] > 0:
+                    print(
+                        "[DATAFLOW][LazyVLNCEDataset] first_motion_token_window (W x 4):",
+                        motions[0].detach().cpu().tolist(),
+                        flush=True,
+                    )
                 print(
                     "[DATAFLOW][LazyVLNCEDataset] <image> token positions:",
                     _summarize_positions(img_pos),
@@ -2751,6 +3002,12 @@ class DataCollatorForSupervisedDataset:
             )
             print("[DATAFLOW][DataCollator] images shape:", tuple(batch["images"].shape), flush=True)
             print("[DATAFLOW][DataCollator] motions shape:", tuple(batch["motions"].shape), flush=True)
+            if torch.is_tensor(batch["motions"]) and batch["motions"].ndim == 3 and batch["motions"].shape[0] > 0:
+                print(
+                    "[DATAFLOW][DataCollator] first_motion_window (W x 4):",
+                    batch["motions"][0].detach().cpu().tolist(),
+                    flush=True,
+                )
             print(
                 "[DATAFLOW][DataCollator] <image> token positions (sample 0):",
                 _summarize_positions(img_pos),

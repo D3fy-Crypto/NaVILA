@@ -9,10 +9,13 @@ DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-0}
 TUNE_LANGUAGE_MODEL=${TUNE_LANGUAGE_MODEL:-False}
 MODEL_MAX_LENGTH=${MODEL_MAX_LENGTH:-2048}
 #nohup bash [sft_8frames_launchjson.sh](http://_vscodecontentref_/0) > [train.log](http://_vscodecontentref_/1) 2>&1 &
-OUTPUT="./checkpoints/navila-8b-8f-sft_motion_alligned"
+OUTPUT="./checkpoints/navila-8b-8f-sft_motion_alligned_debug_26"
 
 
 LLAVA_DEBUG_MOTION=0 \
+LLAVA_DEBUG_DATAFLOW=0 \
+LLAVA_DEBUG_MOTION_INPUT=0 \
+LLAVA_DEBUG_MOTION_INPUT_MAX_PRINTS=0 \
 torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_PORT \
     --master_addr $MASTER_ADDR --node_rank=$CURRENT_RANK \
     llava/train/train_mem.py \
@@ -25,8 +28,9 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --mm_vision_select_feature cls_patch \
     --mm_projector mlp_downsample \
     --num_video_frames 8 \
+    --vlnce_motion_source json_actions \
     --motion_alignment_debug False \
-    --motion_alignment_debug_max_prints 0 \
+    --motion_alignment_debug_max_prints 10 \
     --tune_vision_tower False \
     --tune_mm_projector False \
     --tune_language_model $TUNE_LANGUAGE_MODEL \
@@ -39,8 +43,8 @@ torchrun --nnodes=$n_node --nproc_per_node=$GPUS_PER_NODE --master_port=$MASTER_
     --bf16 True \
     --output_dir $OUTPUT \
     --num_train_epochs 0.02 \
-    --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 10 \
+    --per_device_train_batch_size 10 \
+    --gradient_accumulation_steps 2 \
     --do_train True \
     --do_eval False \
     --save_strategy steps \

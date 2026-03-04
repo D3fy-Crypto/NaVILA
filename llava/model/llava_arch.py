@@ -40,6 +40,31 @@ from llava.utils.media import extract_media
 from llava.utils.tokenizer import infer_stop_tokens, tokenize_conversation
 
 
+def _env_flag_enabled(key: str, default: bool = False) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _env_int(key: str, default: int) -> int:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+_MOTION_INPUT_DEBUG_ENABLED = _env_flag_enabled(
+    "LLAVA_DEBUG_MOTION_INPUT",
+    default=_env_flag_enabled("LLAVA_DEBUG_DATAFLOW", default=_env_flag_enabled("LLAVA_DEBUG_MOTION", default=False)),
+)
+_MOTION_INPUT_DEBUG_MAX_PRINTS = max(0, _env_int("LLAVA_DEBUG_MOTION_INPUT_MAX_PRINTS", 2))
+_MOTION_INPUT_DEBUG_PRINTED = 0
+
+
 # TODO decide whether should we use metaclass
 class LlavaMetaModel(ABC):
     def init_vlm(self, config: PreTrainedModel = None, *args, **kwargs):
@@ -379,6 +404,33 @@ class LlavaMetaModel(ABC):
             raise ValueError("Motion encoder is not initialized.")
         motion_param = next(motion_encoder.parameters())
         motions = motions.to(device=motion_param.device, dtype=motion_param.dtype)
+        global _MOTION_INPUT_DEBUG_PRINTED
+        debug_this_call = _MOTION_INPUT_DEBUG_ENABLED and _MOTION_INPUT_DEBUG_PRINTED < _MOTION_INPUT_DEBUG_MAX_PRINTS
+        if debug_this_call:
+            _MOTION_INPUT_DEBUG_PRINTED += 1
+            print(
+                "[MOTION_GRU_INPUT] motions shape:",
+                tuple(motions.shape),
+                "dtype:",
+                motions.dtype,
+                "device:",
+                motions.device,
+                flush=True,
+            )
+            if motions.ndim == 3 and motions.shape[0] > 0:
+                dbg = motions.detach().float().cpu()
+                print("[MOTION_GRU_INPUT] sample0_window (W x 4):", dbg[0].tolist(), flush=True)
+                print(
+                    "[MOTION_GRU_INPUT] channel_mean:",
+                    dbg.mean(dim=(0, 1)).tolist(),
+                    "channel_min:",
+                    dbg.amin(dim=(0, 1)).tolist(),
+                    "channel_max:",
+                    dbg.amax(dim=(0, 1)).tolist(),
+                    flush=True,
+                )
+            else:
+                print("[MOTION_GRU_INPUT] unexpected motion tensor rank for GRU input.", flush=True)
         motion_features = motion_encoder(motions)
         motion_projector = self.get_motion_projector()
         if motion_projector is not None:
@@ -390,6 +442,14 @@ class LlavaMetaModel(ABC):
                     f"Motion projector is None but motion_features dim {motion_features.shape[-1]} "
                     f"!= hidden_size {hidden_size}."
                 )
+        if debug_this_call:
+            print(
+                "[MOTION_GRU_INPUT] encoded_motion_features shape:",
+                tuple(motion_features.shape),
+                "dtype:",
+                motion_features.dtype,
+                flush=True,
+            )
         return motion_features
 
     ## @yunhao: is there a better way to handle function call and attributes for llm?
