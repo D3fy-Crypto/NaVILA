@@ -23,6 +23,18 @@ _C.TENSORBOARD_DIR = "data/tensorboard_dirs/debug"
 _C.RESULTS_DIR = "eval_out/"
 
 # ----------------------------------------------------------------------------
+# QWEN VL CONFIG
+# ----------------------------------------------------------------------------
+_C.QWEN = CN()
+_C.QWEN.DO_SAMPLE = True
+_C.QWEN.TOP_P = 0.8
+_C.QWEN.TOP_K = 20
+_C.QWEN.TEMPERATURE = 0.7
+_C.QWEN.REPETITION_PENALTY = 1.0
+_C.QWEN.PRESENCE_PENALTY = 1.5
+_C.QWEN.MAX_NEW_TOKENS = 64
+
+# ----------------------------------------------------------------------------
 # EVAL CONFIG
 # ----------------------------------------------------------------------------
 _C.EVAL = CN()

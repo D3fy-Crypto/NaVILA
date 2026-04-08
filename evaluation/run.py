@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib
 import os
 import random
 
@@ -10,6 +11,21 @@ from habitat import logger
 from habitat_baselines.common.baseline_registry import baseline_registry
 from vlnce_baselines.config.default import get_config
 from vlnce_baselines.nonlearning_agents import evaluate_agent, nonlearning_inference
+
+
+def _load_trainer_module(trainer_name: str) -> None:
+    trainer_modules = {
+        "dagger": "vlnce_baselines.dagger_trainer",
+        "cma": "vlnce_baselines.cma_trainer",
+        "recollect": "vlnce_baselines.recollect_trainer",
+        "ddppo-waypoint": "vlnce_baselines.ddppo_waypoint_trainer",
+        "navila": "vlnce_baselines.navila_trainer",
+        "qwen": "vlnce_baselines.qwen_trainer",
+    }
+
+    module_name = trainer_modules.get(trainer_name)
+    if module_name is not None:
+        importlib.import_module(module_name)
 
 
 def main():
@@ -29,6 +45,12 @@ def main():
     parser.add_argument("--num-chunks", type=int, default=1)
     parser.add_argument("--chunk-idx", type=int, default=0)
     parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="optional log file path that overrides config.LOG_FILE for this run",
+    )
+    parser.add_argument(
         "opts",
         default=None,
         nargs=argparse.REMAINDER,
@@ -39,7 +61,14 @@ def main():
     run_exp(**vars(args))
 
 
-def run_exp(exp_config: str, run_type: str, num_chunks: int, chunk_idx: int, opts=None) -> None:
+def run_exp(
+    exp_config: str,
+    run_type: str,
+    num_chunks: int,
+    chunk_idx: int,
+    log_file: str = None,
+    opts=None,
+) -> None:
     """Runs experiment given mode and config
 
     Args:
@@ -48,6 +77,12 @@ def run_exp(exp_config: str, run_type: str, num_chunks: int, chunk_idx: int, opt
         opts: list of strings of additional config options.
     """
     config = get_config(exp_config, opts)
+
+    if log_file is not None and len(log_file) > 0:
+        config.defrost()
+        config.LOG_FILE = log_file
+        config.freeze()
+
     logger.info(f"config: {config}")
     logdir = "/".join(config.LOG_FILE.split("/")[:-1])
     if logdir:
@@ -72,6 +107,7 @@ def run_exp(exp_config: str, run_type: str, num_chunks: int, chunk_idx: int, opt
         nonlearning_inference(config)
         return
 
+    _load_trainer_module(config.TRAINER_NAME)
     trainer_init = baseline_registry.get_trainer(config.TRAINER_NAME)
     assert trainer_init is not None, f"{config.TRAINER_NAME} is not supported"
 

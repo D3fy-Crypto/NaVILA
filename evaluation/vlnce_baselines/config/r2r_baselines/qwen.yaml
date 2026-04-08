@@ -1,0 +1,25 @@
+---
+BASE_TASK_CONFIG_PATH: habitat_extensions/config/vlnce_task.yaml
+TRAINER_NAME: qwen
+SIMULATOR_GPU_IDS: [0]
+TORCH_GPU_ID: 0
+NUM_ENVIRONMENTS: 1
+EVAL_CKPT_PATH_DIR: /home/rithvik/IROS_proj/cvpr_proj/model
+RESULTS_DIR: eval_out_qwen/
+
+TASK_CONFIG:
+    SEED: 3407
+
+QWEN:
+    DO_SAMPLE: true
+    TOP_P: 0.8
+    TOP_K: 20
+    TEMPERATURE: 0.7
+    REPETITION_PENALTY: 1.0
+    PRESENCE_PENALTY: 1.5
+    MAX_NEW_TOKENS: 64
+
+EVAL:
+    USE_CKPT_CONFIG: false
+    SPLIT: val_unseen
+    EPISODE_COUNT: -1
