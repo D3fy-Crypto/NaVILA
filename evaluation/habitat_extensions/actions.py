@@ -53,12 +53,12 @@ class GoTowardPoint(TeleportAction):
                 "r": spaces.Box(
                     low=np.array([0.0]),
                     high=np.array([np.sqrt(2 * (coord_range**2))]),
-                    dtype=np.float,
+                    dtype=np.float64,
                 ),
                 "theta": spaces.Box(
                     low=np.array([0.0]),
                     high=np.array([2 * np.pi]),
-                    dtype=np.float,
+                    dtype=np.float64,
                 ),
             }
         )

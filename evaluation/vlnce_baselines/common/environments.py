@@ -95,8 +95,8 @@ class VLNCEWaypointEnv(habitat.RLEnv):
 
     def get_reward_range(self) -> Tuple[float, float]:
         return (
-            np.finfo(np.float).min,
-            np.finfo(np.float).max,
+            np.finfo(np.float64).min,
+            np.finfo(np.float64).max,
         )
 
     def get_reward(self, observations: Observations) -> float:

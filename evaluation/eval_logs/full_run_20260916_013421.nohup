@@ -1,0 +1,5 @@
+=== 01:34:21 arm=gru -> eval_out/stage3-full-20260913-2333-gru/VLN-CE-v1/val_unseen
+arm=gru chunk 0/4 on GPU 0 -> /home/djonna1/brain_inspired_project/NaVILA/evaluation/eval_logs/r2r_gru_4-0_20260916_013421.log
+arm=gru chunk 1/4 on GPU 1 -> /home/djonna1/brain_inspired_project/NaVILA/evaluation/eval_logs/r2r_gru_4-1_20260916_013421.log
+arm=gru chunk 2/4 on GPU 0 -> /home/djonna1/brain_inspired_project/NaVILA/evaluation/eval_logs/r2r_gru_4-2_20260916_013421.log
+arm=gru chunk 3/4 on GPU 1 -> /home/djonna1/brain_inspired_project/NaVILA/evaluation/eval_logs/r2r_gru_4-3_20260916_013421.log

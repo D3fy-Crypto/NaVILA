@@ -21,6 +21,13 @@ _C.VIDEO_OPTION = ["disk"]  # options: "disk", "tensorboard"
 _C.VIDEO_DIR = "data/videos/debug"
 _C.TENSORBOARD_DIR = "data/tensorboard_dirs/debug"
 _C.RESULTS_DIR = "eval_out/"
+# Stage-3 Qwen3-VL eval: which trajectory-memory arm the policy runs
+#   gru          inject the GRU memory vector
+#   gru-memzero  same weights, encoder input zeroed (the Stage-2 ablation)
+#   nogru        stock Qwen3-VL checkpoint, no <gru> token in the prompt
+_C.ARM = "gru"
+# suffix for the results directory, so arms never overwrite each other
+_C.RUN_TAG = ""
 
 # ----------------------------------------------------------------------------
 # EVAL CONFIG

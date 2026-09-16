@@ -1,0 +1,21 @@
+---
+# Stage-3 Qwen3-VL + spatial-memory GRU on VLN-CE R2R. Same task settings as navila.yaml;
+# only the trainer and the model differ. Data paths are absolute (see vlnce_task_bw.yaml),
+# so nothing depends on symlinks under evaluation/data.
+BASE_TASK_CONFIG_PATH: habitat_extensions/config/vlnce_task_bw.yaml
+TRAINER_NAME: qwen3vl_gru
+SIMULATOR_GPU_IDS: [0]
+TORCH_GPU_ID: 0
+NUM_ENVIRONMENTS: 1
+EVAL_CKPT_PATH_DIR: /home/djonna1/brain_inspired_project/IROS_proj/stage3/runs/stage3-full-20260913-2333
+RESULTS_DIR: eval_out/
+
+# which memory arm: gru | gru-memzero | nogru   (overridden from the launcher)
+ARM: gru
+# appended to the results directory name so arms never overwrite each other
+RUN_TAG: ""
+
+EVAL:
+    USE_CKPT_CONFIG: false
+    SPLIT: val_unseen
+    EPISODE_COUNT: -1

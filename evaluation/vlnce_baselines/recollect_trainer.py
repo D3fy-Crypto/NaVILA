@@ -17,7 +17,10 @@ from vlnce_baselines.dagger_trainer import collate_fn
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=FutureWarning)
-    import tensorflow as tf  # noqa: F401
+    try:
+        import tensorflow as tf  # noqa: F401
+    except ModuleNotFoundError:  # unused import-order workaround
+        tf = None
 
 
 @baseline_registry.register_trainer(name="recollect_trainer")
