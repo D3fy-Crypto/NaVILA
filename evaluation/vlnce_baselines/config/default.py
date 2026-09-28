@@ -28,6 +28,9 @@ _C.RESULTS_DIR = "eval_out/"
 _C.ARM = "gru"
 # suffix for the results directory, so arms never overwrite each other
 _C.RUN_TAG = ""
+# action_replay trainer: re-render a finished eval from its per-step log, no model involved
+_C.REPLAY_LOG = ""    # log with "[Qwen][ep=E][step=S] raw=... parsed=ACT xK" / "queued_action=ACT" lines
+_C.REPLAY_JSON = ""   # that run's per-episode results JSON(s), glob allowed; replayed metrics are checked against it
 
 # ----------------------------------------------------------------------------
 # EVAL CONFIG

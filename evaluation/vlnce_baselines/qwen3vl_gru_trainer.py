@@ -212,6 +212,8 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
 
                 ep_id = current_episodes[i].episode_id
                 stats_episodes[ep_id] = infos[i]
+                if config.EVAL.SAVE_RESULTS:
+                    self._write_partial(fname, stats_episodes, num_eps, time.time() - start_time)
                 observations[i] = envs.reset_at(i)[0]
                 past_rgbs[i] = []
                 past_actions[i] = []
@@ -254,6 +256,23 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
         if config.EVAL.SAVE_RESULTS:
             with open(fname, "w") as f:
                 json.dump(stats_episodes, f, indent=4)
+            if os.path.exists(fname + ".partial"):
+                os.remove(fname + ".partial")
+
+    @staticmethod
+    def _write_partial(fname, stats_episodes, total, elapsed):
+        """Episodes finished so far, rewritten after every episode as <fname>.partial.
+
+        Lets a long run be monitored (SR so far, ETA) before the final JSON exists. Written to a
+        temp file and renamed, so a reader never sees half a file. The skip-if-exists check only
+        looks at the final name, so a leftover .partial never blocks a re-run.
+        """
+        eps = {k: {m: v for m, v in s.items() if m != "top_down_map_vlnce"} for k, s in stats_episodes.items()}
+        tmp = fname + ".partial.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"_progress": {"done": len(eps), "total": total, "elapsed_s": round(elapsed, 1)},
+                       "episodes": eps}, f)
+        os.replace(tmp, fname + ".partial")
 
     @staticmethod
     def _pause_envs(envs_to_pause, envs, batch, rgb_frames=None):

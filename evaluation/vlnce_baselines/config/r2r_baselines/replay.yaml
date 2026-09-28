@@ -1,0 +1,17 @@
+---
+# Re-render a finished R2R eval from its per-step action log (vlnce_baselines/replay_trainer.py).
+# Same task settings as qwen3vl_gru.yaml, so replayed trajectories match the original run.
+BASE_TASK_CONFIG_PATH: habitat_extensions/config/vlnce_task_bw.yaml
+TRAINER_NAME: action_replay
+SIMULATOR_GPU_IDS: [0]
+TORCH_GPU_ID: 0
+NUM_ENVIRONMENTS: 1
+RESULTS_DIR: eval_out/
+RUN_TAG: "-replay"
+REPLAY_LOG: ""     # set from the launcher
+REPLAY_JSON: ""    # set from the launcher
+
+EVAL:
+    USE_CKPT_CONFIG: false
+    SPLIT: val_unseen
+    EPISODE_COUNT: -1

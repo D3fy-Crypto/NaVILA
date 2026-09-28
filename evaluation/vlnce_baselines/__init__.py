@@ -1,5 +1,6 @@
 from vlnce_baselines import cma_trainer, dagger_trainer, ddppo_waypoint_trainer, recollect_trainer
 from vlnce_baselines import qwen3vl_gru_trainer  # Qwen3-VL + spatial-memory GRU (no llava needed)
+from vlnce_baselines import replay_trainer  # re-render a finished eval from its action log
 from vlnce_baselines.common import environments
 from vlnce_baselines.models import cma_policy, seq2seq_policy, waypoint_policy
 
