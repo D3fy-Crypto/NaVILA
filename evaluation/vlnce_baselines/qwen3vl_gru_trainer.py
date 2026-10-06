@@ -14,7 +14,7 @@ stock harness. What changes:
   queue     cleared on episode end. NaVILA leaks queue_actions across episodes, which would
             execute the tail of one episode's turn at the start of the next.
 
-Arms are selected by config.ARM: gru | gru-memzero | nogru.
+Arms are selected by config.ARM: gru | gru-memzero | gru-noline | nogru.
 """
 
 import json

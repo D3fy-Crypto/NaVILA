@@ -24,6 +24,7 @@ _C.RESULTS_DIR = "eval_out/"
 # Stage-3 Qwen3-VL eval: which trajectory-memory arm the policy runs
 #   gru          inject the GRU memory vector
 #   gru-memzero  same weights, encoder input zeroed (the Stage-2 ablation)
+#   gru-noline   same GRU weights, no-GRU prompt, no memory (memory-dropout P(a|V,I) arm)
 #   nogru        stock Qwen3-VL checkpoint, no <gru> token in the prompt
 _C.ARM = "gru"
 # suffix for the results directory, so arms never overwrite each other

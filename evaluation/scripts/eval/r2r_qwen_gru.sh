@@ -8,7 +8,7 @@
 #   full split, two chunks per GPU:
 #     bash scripts/eval/r2r_qwen_gru.sh $CKPT gru 4 0 "0,1,0,1"
 #
-# ARM: gru | gru-memzero | nogru. Results go to
+# ARM: gru | gru-memzero | gru-noline | nogru. Results go to
 #   eval_out/<ckpt-name><RUN_TAG or -ARM>/VLN-CE-v1/val_unseen/val_unseen_<chunks>-<idx>.json
 # A chunk whose JSON already exists is skipped, so delete stale files before re-running.
 set -eo pipefail
@@ -37,7 +37,7 @@ export ATTN_IMPL=${ATTN_IMPL:-sdpa} PATCH_EMBED_LINEAR=${PATCH_EMBED_LINEAR:-1}
 export TOKENIZERS_PARALLELISM=false
 unset DISPLAY
 
-case "$ARM" in gru|gru-memzero|nogru) ;; *) echo "ARM must be gru, gru-memzero or nogru"; exit 2;; esac
+case "$ARM" in gru|gru-memzero|gru-noline|nogru) ;; *) echo "ARM must be gru, gru-memzero, gru-noline or nogru"; exit 2;; esac
 [[ -f "$MODEL_PATH/config.json" ]] || { echo "no checkpoint at $MODEL_PATH"; exit 1; }
 
 EXTRA=(ARM "$ARM")
