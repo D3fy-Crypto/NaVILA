@@ -25,8 +25,11 @@ _C.RESULTS_DIR = "eval_out/"
 #   gru          inject the GRU memory vector
 #   gru-memzero  same weights, encoder input zeroed (the Stage-2 ablation)
 #   gru-noline   same GRU weights, no-GRU prompt, no memory (memory-dropout P(a|V,I) arm)
+#   gru-gate     no-line until the simulator path length exceeds GATE_M metres, then memory
 #   nogru        stock Qwen3-VL checkpoint, no <gru> token in the prompt
 _C.ARM = "gru"
+# gru-gate only: metres actually travelled (path_length) before the memory is switched on
+_C.GATE_M = 0.0
 # suffix for the results directory, so arms never overwrite each other
 _C.RUN_TAG = ""
 # action_replay trainer: re-render a finished eval from its per-step log, no model involved

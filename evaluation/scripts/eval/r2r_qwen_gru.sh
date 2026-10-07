@@ -8,7 +8,7 @@
 #   full split, two chunks per GPU:
 #     bash scripts/eval/r2r_qwen_gru.sh $CKPT gru 4 0 "0,1,0,1"
 #
-# ARM: gru | gru-memzero | gru-noline | nogru. Results go to
+# ARM: gru | gru-memzero | gru-noline | gru-gate (with GATE_M=<m>) | nogru. Results go to
 #   eval_out/<ckpt-name><RUN_TAG or -ARM>/VLN-CE-v1/val_unseen/val_unseen_<chunks>-<idx>.json
 # A chunk whose JSON already exists is skipped, so delete stale files before re-running.
 set -eo pipefail
@@ -37,10 +37,14 @@ export ATTN_IMPL=${ATTN_IMPL:-sdpa} PATCH_EMBED_LINEAR=${PATCH_EMBED_LINEAR:-1}
 export TOKENIZERS_PARALLELISM=false
 unset DISPLAY
 
-case "$ARM" in gru|gru-memzero|gru-noline|nogru) ;; *) echo "ARM must be gru, gru-memzero, gru-noline or nogru"; exit 2;; esac
+case "$ARM" in gru|gru-memzero|gru-noline|gru-gate|nogru) ;; *) echo "ARM must be gru, gru-memzero, gru-noline, gru-gate or nogru"; exit 2;; esac
+if [[ "$ARM" == "gru-gate" ]]; then
+    [[ -n "${GATE_M:-}" ]] || { echo "ARM=gru-gate needs GATE_M=<metres>"; exit 2; }
+fi
 [[ -f "$MODEL_PATH/config.json" ]] || { echo "no checkpoint at $MODEL_PATH"; exit 1; }
 
 EXTRA=(ARM "$ARM")
+[[ "$ARM" == "gru-gate" ]] && EXTRA+=(GATE_M "$(printf "%.2f" "$GATE_M")")   # yacs wants a float
 [[ -n "${EPISODE_COUNT:-}" ]] && EXTRA+=(EVAL.EPISODE_COUNT "$EPISODE_COUNT")
 [[ -n "${RUN_TAG:-}" ]] && EXTRA+=(RUN_TAG "$RUN_TAG")
 
@@ -51,7 +55,7 @@ STAMP=$(date +%Y%m%d_%H%M%S)
 
 for IDX in $(seq 0 $((CHUNKS-1))); do
     CHUNK_IDX=$((IDX + IDX_START))
-    LOG=$LOG_DIR/r2r_${ARM}_${TOTAL_CHUNKS}-${CHUNK_IDX}_$STAMP.log
+    LOG=$LOG_DIR/r2r_${ARM}${GATE_M:+${GATE_M}m}_${TOTAL_CHUNKS}-${CHUNK_IDX}_$STAMP.log
     echo "arm=$ARM chunk $CHUNK_IDX/$TOTAL_CHUNKS on GPU ${GPULIST[$IDX]} -> $LOG"
     # Assign the GPU through the config, not CUDA_VISIBLE_DEVICES: habitat-sim matches EGL
     # devices by physical CUDA index, and hiding devices makes it fail with

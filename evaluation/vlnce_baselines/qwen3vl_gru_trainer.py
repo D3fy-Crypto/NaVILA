@@ -14,7 +14,8 @@ stock harness. What changes:
   queue     cleared on episode end. NaVILA leaks queue_actions across episodes, which would
             execute the tail of one episode's turn at the start of the next.
 
-Arms are selected by config.ARM: gru | gru-memzero | gru-noline | nogru.
+Arms are selected by config.ARM: gru | gru-memzero | gru-noline | gru-gate | nogru.
+gru-gate also needs config.GATE_M (> 0): no memory until the simulator path length passes it.
 """
 
 import json
@@ -106,13 +107,14 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
         arm = self.config.ARM
         logger.info(f"checkpoint_path: {checkpoint_path}  arm: {arm}")
 
+        gate_m = float(getattr(self.config, "GATE_M", 0.0) or 0.0) if arm == "gru-gate" else 0.0
         policy = GRUVLNPolicy(checkpoint_path, arm=arm, device=f"cuda:{self.config.TORCH_GPU_ID}",
-                              log=logger.info)
+                              log=logger.info, gate_m=gate_m)
 
         config = self.config.clone()
         split = config.EVAL.SPLIT
         model_name = os.path.basename(os.path.normpath(checkpoint_path))
-        run_name = model_name + (config.RUN_TAG or f"-{arm}")
+        run_name = model_name + (config.RUN_TAG or (f"-{arm}{gate_m:g}m" if gate_m > 0 else f"-{arm}"))
 
         config.defrost()
         config.TASK_CONFIG.DATASET.SPLIT = split
@@ -148,6 +150,9 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
         stats_episodes = {}
         past_rgbs = [[] for _ in range(envs.num_envs)]
         past_actions = [[] for _ in range(envs.num_envs)]   # executed primitives -> the GRU history
+        travelled_m = [0.0 for _ in range(envs.num_envs)]   # simulator path_length so far (gate arm)
+        gate_ep = [[0, 0, -1] for _ in range(envs.num_envs)]  # decisions, decisions open, first open
+        gate_stats = {}
         rgb_frames = [[] for _ in range(envs.num_envs)]
 
         if len(config.VIDEO_OPTION) > 0:
@@ -175,9 +180,16 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
                 curr_rgb = Image.fromarray(np.uint8(batch[0]["rgb"].cpu().numpy())).convert("RGB")
                 instruction = current_episodes[0].instruction.instruction_text
                 t0 = time.time()
+                policy.travelled_m = travelled_m[0]
                 answer = policy.act(instruction, past_rgbs[0] + [curr_rgb], past_actions[0])
                 decision_time += time.time() - t0
                 n_decisions += 1
+                if gate_m > 0:
+                    if policy.last_open:
+                        gate_ep[0][1] += 1
+                        if gate_ep[0][2] < 0:
+                            gate_ep[0][2] = gate_ep[0][0]
+                    gate_ep[0][0] += 1
 
                 action, repeats, parsed = parse_action(answer)
                 if not parsed:
@@ -201,6 +213,7 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
             for i in range(envs.num_envs):
                 past_rgbs[i].append(Image.fromarray(batch[0]["rgb"].cpu().numpy()).convert("RGB"))
                 past_actions[i].append(executed)           # same cadence as the frame history
+                travelled_m[i] = float(infos[i].get("path_length", travelled_m[i]))
 
                 if len(config.VIDEO_OPTION) > 0:
                     frame = observations_to_image(observations[i], infos[i])
@@ -217,6 +230,11 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
                 observations[i] = envs.reset_at(i)[0]
                 past_rgbs[i] = []
                 past_actions[i] = []
+                if gate_m > 0:
+                    gate_stats[ep_id] = {"decisions": gate_ep[i][0], "decisions_open": gate_ep[i][1],
+                                         "first_open_decision": gate_ep[i][2]}
+                travelled_m[i] = 0.0
+                gate_ep[i] = [0, 0, -1]
                 queue_actions.clear()                      # never carry a turn into the next episode
 
                 if config.use_pbar:
@@ -256,6 +274,10 @@ class Qwen3VLGRUTrainer(BaseVLNCETrainer):
         if config.EVAL.SAVE_RESULTS:
             with open(fname, "w") as f:
                 json.dump(stats_episodes, f, indent=4)
+            if gate_m > 0:
+                with open(os.path.join(config.RESULTS_DIR, f"gate-stats-{self.num_chunks}-{self.chunk_idx}.json"), "w") as f:
+                    json.dump({"gate_m": gate_m, "gate_metric": "actual_path_length", "arm": arm,
+                               "per_episode": gate_stats}, f, indent=1)
             if os.path.exists(fname + ".partial"):
                 os.remove(fname + ".partial")
 
