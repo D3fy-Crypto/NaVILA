@@ -92,7 +92,13 @@ class VLNCEDatasetV1(Dataset):
         deserialized = json.loads(json_str)
         self.instruction_vocab = VocabDict(word_list=deserialized["instruction_vocab"]["word_list"])
 
-        chunked_episodes = get_chunk(deserialized["episodes"], num_chunks, chunk_idx)
+        episodes = deserialized["episodes"]
+        ids_file = os.environ.get("EPISODE_IDS_FILE")
+        if ids_file:  # a fixed episode subset (e.g. the Stage-3 screening 600), applied before chunking
+            with open(ids_file) as f:
+                keep = {str(i) for i in json.load(f)}
+            episodes = [e for e in episodes if str(e["episode_id"]) in keep]
+        chunked_episodes = get_chunk(episodes, num_chunks, chunk_idx)
 
         for episode in chunked_episodes:
             # cast integer IDs to strings

@@ -62,7 +62,7 @@ for IDX in $(seq 0 $((CHUNKS-1))); do
     # "unable to find EGL device for CUDA device 0".
     GPU=${GPULIST[$IDX]}
     $PY run.py \
-        --exp-config vlnce_baselines/config/r2r_baselines/qwen3vl_gru.yaml \
+        --exp-config "${EXP_CONFIG:-vlnce_baselines/config/r2r_baselines/qwen3vl_gru.yaml}" \
         --run-type eval \
         --num-chunks "$TOTAL_CHUNKS" \
         --chunk-idx "$CHUNK_IDX" \
